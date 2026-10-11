@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  PM
+  MEMBER
+  QA
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  DONE
+}
+
+enum AIRecommendationStatus {
+  PENDING_CONFIRMATION
+  ACCEPTED
+  REJECTED
+}
+
+model User {
+  id                      String             @id @default(uuid()) @db.Char(36)
+  email                   String             @unique @db.VarChar(191)
+  name                    String             @db.VarChar(191)
+  role                    Role               @default(MEMBER)
+  createdAt               DateTime           @default(now()) @db.DateTime(3)
+  updatedAt               DateTime           @updatedAt @db.DateTime(3)
+  tasks                   Task[]
+  reviewedRecommendations AIRecommendation[] @relation("RecommendationReviewer")
+}
+
+model Project {
+  id              String             @id @default(uuid()) @db.Char(36)
+  name            String             @db.VarChar(191)
+  summary         String?            @db.Text
+  createdAt       DateTime           @default(now()) @db.DateTime(3)
+  updatedAt       DateTime           @updatedAt @db.DateTime(3)
+  tasks           Task[]
+  documents       Document[]
+  recommendations AIRecommendation[]
+}
+
+model Task {
+  id          String     @id @default(uuid()) @db.Char(36)
+  projectId   String     @db.Char(36)
+  assigneeId  String?    @db.Char(36)
+  title       String     @db.VarChar(191)
+  description String?    @db.Text
+  status      TaskStatus @default(TODO)
+  createdAt   DateTime   @default(now()) @db.DateTime(3)
+  updatedAt   DateTime   @updatedAt @db.DateTime(3)
+  project     Project    @relation(fields: [projectId], references: [id])
+  assignee    User?      @relation(fields: [assigneeId], references: [id])
+
+  @@index([projectId, status])
+}
+
+model AIRecommendation {
+  id           String                 @id @default(uuid()) @db.Char(36)
+  projectId    String                 @db.Char(36)
+  reviewedById String?                @db.Char(36)
+  kind         String                 @db.VarChar(40)
+  payload      Json
+  status       AIRecommendationStatus @default(PENDING_CONFIRMATION)
+  createdAt    DateTime               @default(now()) @db.DateTime(3)
+  reviewedAt   DateTime?              @db.DateTime(3)
+  project      Project                @relation(fields: [projectId], references: [id])
+  reviewedBy   User?                  @relation("RecommendationReviewer", fields: [reviewedById], references: [id])
+
+  @@index([projectId, status, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Char(36)
+  actorId    String   @db.Char(36)
+  action     String   @db.VarChar(100)
+  entityType String   @db.VarChar(100)
+  entityId   String   @db.Char(36)
+  before     Json?
+  after      Json?
+  ip         String?  @db.VarChar(45)
+  userAgent  String?  @db.VarChar(512)
+  createdAt  DateTime @default(now()) @db.DateTime(3)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model Document {
+  id        String   @id @default(uuid()) @db.Char(36)
+  projectId String   @db.Char(36)
+  objectKey String   @db.VarChar(512)
+  mediaType String   @db.VarChar(191)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  project   Project  @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, createdAt])
+}

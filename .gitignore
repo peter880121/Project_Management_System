@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+prisma/*.db
+prisma/*.db-journal
+.idea/
+.venv/
+.corepack-cache/
+__pycache__/
