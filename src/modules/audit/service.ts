@@ -15,6 +15,9 @@ export type AuditAction =
   | "AI_WBS_GENERATED"
   | "AI_WBS_GENERATION_FAILED"
   | "AI_AUDIT_SUMMARY_GENERATED"
+  | "AI_RISK_SUGGESTIONS_GENERATED"
+  | "AI_RISK_SUGGESTION_HANDLED"
+  | "AI_RISK_SUGGESTION_IGNORED"
   | "RAG_SEARCH";
 
 const acceptedWbsPayloadSchema = z.object({
@@ -279,6 +282,39 @@ export async function reviewAiSuggestion(input: {
       entityId: suggestion.id,
       before: { status: suggestion.status },
       after: { status: updated.status, reviewedById: input.actorId, suggestionId: suggestion.id },
+      ip: input.ip,
+      userAgent: input.userAgent,
+    });
+    return updated;
+  });
+}
+
+export async function reviewRiskSuggestion(input: {
+  suggestionId: string;
+  decision: "HANDLED" | "IGNORED";
+  actorId: string;
+} & AuditRequestMetadata) {
+  return prisma.$transaction(async (tx) => {
+    const suggestion = await tx.aiSuggestion.findUnique({ where: { id: input.suggestionId } });
+    if (!suggestion) throw new Error("AI suggestion not found");
+    if (suggestion.type !== "RISK") throw new Error("Suggestion is not a risk warning");
+    if (suggestion.status !== "PENDING") throw new Error("Risk suggestion has already been reviewed");
+    const status = input.decision === "HANDLED" ? "ACCEPTED" : "REJECTED";
+    const reviewedAt = new Date();
+    const changed = await tx.aiSuggestion.updateMany({
+      where: { id: suggestion.id, type: "RISK", status: "PENDING" },
+      data: { status, reviewedById: input.actorId, reviewedAt },
+    });
+    if (changed.count !== 1) throw new Error("Risk suggestion was reviewed concurrently; refresh and retry");
+    const updated = await tx.aiSuggestion.findUniqueOrThrow({ where: { id: suggestion.id } });
+    await recordAudit(tx, {
+      actorId: input.actorId,
+      projectId: suggestion.projectId,
+      action: input.decision === "HANDLED" ? "AI_RISK_SUGGESTION_HANDLED" : "AI_RISK_SUGGESTION_IGNORED",
+      entityType: "AiSuggestion",
+      entityId: suggestion.id,
+      before: { status: suggestion.status },
+      after: { status: updated.status, decision: input.decision, reviewedById: input.actorId },
       ip: input.ip,
       userAgent: input.userAgent,
     });
