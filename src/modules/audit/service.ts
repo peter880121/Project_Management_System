@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma, Role, TaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { canTransitionTaskStatus } from "@/modules/tasks/status";
 
 export type AuditAction =
+  | "TASK_CREATED"
   | "TASK_STATUS_CHANGED"
   | "TASK_ASSIGNED"
   | "PERMISSION_CHANGED"
@@ -10,6 +12,40 @@ export type AuditAction =
   | "AI_SUGGESTION_ACCEPTED"
   | "AI_SUGGESTION_REJECTED"
   | "RAG_SEARCH";
+
+export async function createTask(input: {
+  projectId: string;
+  title: string;
+  description?: string;
+  requirementId?: string;
+  actorId: string;
+} & AuditRequestMetadata) {
+  return prisma.$transaction(async (tx) => {
+    const project = await tx.project.findUnique({ where: { id: input.projectId }, select: { id: true } });
+    if (!project) throw new Error("Project not found");
+    if (input.requirementId) {
+      const requirement = await tx.requirement.findFirst({ where: { id: input.requirementId, projectId: input.projectId }, select: { id: true } });
+      if (!requirement) throw new Error("Requirement not found in this project");
+    }
+    const task = await tx.task.create({ data: {
+      projectId: input.projectId,
+      title: input.title,
+      description: input.description,
+      requirementId: input.requirementId,
+    } });
+    await recordAudit(tx, {
+      actorId: input.actorId,
+      projectId: input.projectId,
+      action: "TASK_CREATED",
+      entityType: "Task",
+      entityId: task.id,
+      after: { title: task.title, status: task.status, requirementId: task.requirementId },
+      ip: input.ip,
+      userAgent: input.userAgent,
+    });
+    return task;
+  });
+}
 
 export type AuditRequestMetadata = Readonly<{
   ip?: string | null;
@@ -52,6 +88,7 @@ export async function changeTaskStatus(input: {
     const task = await tx.task.findUnique({ where: { id: input.taskId } });
     if (!task) throw new Error("Task not found");
     if (task.status === input.status) throw new Error("Task status is unchanged");
+    if (!canTransitionTaskStatus(task.status, input.status)) throw new Error(`Invalid task status transition: ${task.status} -> ${input.status}`);
     const changed = await tx.task.updateMany({
       where: { id: task.id, status: task.status },
       data: { status: input.status },
