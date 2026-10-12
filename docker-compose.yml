@@ -18,6 +18,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in the environment or .env file}
       DATABASE_URL: mysql://${MYSQL_USER:-medpm}:${MYSQL_PASSWORD:-change-me-local-only}@mysql:3306/${MYSQL_DATABASE:-medpm}?charset=utf8mb4
       MILVUS_ADDRESS: milvus:19530
       MINIO_ENDPOINT: minio

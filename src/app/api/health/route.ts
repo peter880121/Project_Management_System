@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getMilvusClient } from "@/modules/vector/client";
 import { getObjectStorageClient } from "@/modules/documents/storage";
+import { getCurrentUser } from "@/modules/auth/session";
+import { requireRole } from "@/modules/auth/rbac";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,6 +20,10 @@ async function check<T>(operation: () => Promise<T>): Promise<Check> {
 }
 
 export async function GET() {
+  const user = await getCurrentUser();
+  const denied = requireRole(user, ["ADMIN", "PM", "MEMBER", "QA"]);
+  if (denied) return denied;
+
   const mysql = await check(async () => {
     await prisma.$queryRaw`SELECT 1`;
   });

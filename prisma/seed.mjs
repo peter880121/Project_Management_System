@@ -35,15 +35,15 @@ const tasks = Array.from({ length: 24 }, (_, index) => {
 async function main() {
   await prisma.$transaction(async (tx) => {
     for (const user of users) {
-      await tx.user.upsert({ where: { id: user.id }, create: user, update: { email: user.email, name: user.name, role: user.role } });
+      await tx.user.upsert({ where: { id: user.id }, create: user, update: {} });
     }
 
     for (const project of projects) {
-      await tx.project.upsert({ where: { id: project.id }, create: project, update: project });
+      await tx.project.upsert({ where: { id: project.id }, create: project, update: {} });
     }
 
     for (const task of tasks) {
-      await tx.task.upsert({ where: { id: task.id }, create: task, update: task });
+      await tx.task.upsert({ where: { id: task.id }, create: task, update: {} });
     }
 
     for (let projectIndex = 0; projectIndex < projects.length; projectIndex += 1) {
@@ -61,14 +61,14 @@ async function main() {
             version: 1,
             status: "APPROVED",
           },
-          update: { title, content: "Synthetic requirement for software delivery traceability; no patient or production data is included.", status: "APPROVED" },
+          update: {},
         });
 
         const testCaseId = id(401 + projectIndex * 2 + requirementIndex);
         await tx.testCase.upsert({
           where: { id: testCaseId },
           create: { id: testCaseId, requirementId, title: `Verify synthetic requirement ${requirementIndex + 1}`, status: "NOT_RUN" },
-          update: { title: `Verify synthetic requirement ${requirementIndex + 1}`, status: "NOT_RUN" },
+          update: {},
         });
       }
 
@@ -83,7 +83,7 @@ async function main() {
           mediaType: "text/plain",
           parsedText: "Synthetic project brief for demonstration only. No patient information.",
         },
-        update: { filename: "synthetic-release-brief.txt", parsedText: "Synthetic project brief for demonstration only. No patient information." },
+        update: {},
       });
 
       const suggestionId = id(601 + projectIndex);
@@ -97,34 +97,34 @@ async function main() {
           output: { proposal: ["Review scope", "Implement change", "Verify traceability"], requiresHumanReview: true },
           status: "PENDING",
         },
-        update: { status: "PENDING", reviewedById: null, reviewedAt: null },
+        update: {},
       });
     }
 
     for (let index = 0; index < tasks.length; index += 1) {
       const requirementId = id(201 + Math.floor(index / 8) * 2 + (index % 8 < 4 ? 0 : 1));
-      await tx.task.update({ where: { id: tasks[index].id }, data: { requirementId } });
-    }
-
-    for (let index = 0; index < 10; index += 1) {
-      const task = tasks[index];
-      await tx.auditLog.upsert({
-        where: { id: id(501 + index) },
-        create: {
-          id: id(501 + index),
-          actorId: id(index % 2 === 0 ? 2 : 4),
-          action: "TASK_STATUS_CHANGED",
-          entityType: "Task",
-          entityId: task.id,
-          before: { status: task.status === "TODO" ? "IN_PROGRESS" : "TODO" },
-          after: { status: task.status },
-          ip: "192.0.2.10",
-          userAgent: "MedPM-AI synthetic seed",
-          createdAt: now,
-        },
-        update: { actorId: id(index % 2 === 0 ? 2 : 4), after: { status: task.status } },
+      await tx.task.updateMany({
+        where: { id: tasks[index].id, requirementId: null },
+        data: { requirementId },
       });
     }
+
+    await tx.auditLog.createMany({
+      data: tasks.slice(0, 10).map((task, index) => ({
+        id: id(501 + index),
+        actorId: id(index % 2 === 0 ? 2 : 4),
+        projectId: task.projectId,
+        action: "TASK_STATUS_CHANGED",
+        entityType: "Task",
+        entityId: task.id,
+        before: { status: task.status === "TODO" ? "IN_PROGRESS" : "TODO" },
+        after: { status: task.status },
+        ip: "192.0.2.10",
+        userAgent: "MedPM-AI synthetic seed",
+        createdAt: now,
+      })),
+      skipDuplicates: true,
+    });
   }, { maxWait: 10_000, timeout: 30_000 });
 
 }
