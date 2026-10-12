@@ -14,6 +14,7 @@ export type AuditAction =
   | "AI_SUGGESTION_REJECTED"
   | "AI_WBS_GENERATED"
   | "AI_WBS_GENERATION_FAILED"
+  | "AI_AUDIT_SUMMARY_GENERATED"
   | "RAG_SEARCH";
 
 const acceptedWbsPayloadSchema = z.object({
