@@ -14,6 +14,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:seed": "node prisma/seed.mjs",
+    "vector:init": "node src/modules/vector/init.mjs",
     "db:studio": "prisma studio"
   },
   "dependencies": {

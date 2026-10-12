@@ -23,9 +23,17 @@ export async function ensureDocumentsCollection(): Promise<void> {
         { name: "createdAt", data_type: DataType.Int64 },
       ],
     });
+  }
+
+  const { index_descriptions: indexes } = await client.describeIndex({
+    collection_name: DOCUMENTS_COLLECTION,
+    field_name: "embedding",
+  });
+  if (indexes.length === 0) {
     await client.createIndex({
       collection_name: DOCUMENTS_COLLECTION,
       field_name: "embedding",
+      index_name: "documents_embedding_hnsw",
       index_type: "HNSW",
       metric_type: "COSINE",
       params: { M: 16, efConstruction: 200 },
