@@ -9,7 +9,8 @@ import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const updateTaskSchema = z.union([
-  z.object({ status: z.enum(["TODO", "IN_PROGRESS", "BLOCKED", "DONE"]) }).strict(),
+  z.object({ status: z.enum(["TODO", "IN_PROGRESS", "BLOCKED"]) }).strict(),
+  z.object({ status: z.literal("DONE"), actualHours: z.number().positive().max(10_000) }).strict(),
   z.object({ assigneeId: z.uuid().nullable() }).strict(),
 ]);
 
@@ -25,6 +26,7 @@ export async function GET(_request: Request, context: { params: Promise<{ taskId
       assignee: { select: { id: true, name: true } },
       requirement: { include: { testCases: { select: { id: true, title: true, status: true } } } },
       project: { select: { id: true, name: true } },
+      dependencies: { include: { dependsOn: { select: { id: true, title: true, status: true } } } },
     },
   });
   if (!task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
@@ -67,7 +69,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
     return NextResponse.json({ error: "Only PM or ADMIN can reopen a completed task" }, { status: 403 });
   }
   try {
-    const data = await changeTaskStatus({ taskId, status: targetStatus, actorId: user!.id, ...getAuditRequestMetadata(request) });
+    const data = await changeTaskStatus({ taskId, status: targetStatus, ...("actualHours" in parsed.data ? { actualHours: parsed.data.actualHours } : {}), actorId: user!.id, ...getAuditRequestMetadata(request) });
     return NextResponse.json({ data });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to update task";

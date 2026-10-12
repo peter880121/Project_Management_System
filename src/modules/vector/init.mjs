@@ -42,3 +42,37 @@ if (indexes.length === 0) {
 }
 
 await client.loadCollection({ collection_name: collectionName });
+
+const taskHistoryCollectionName = "task_history";
+const { value: taskHistoryExists } = await client.hasCollection({ collection_name: taskHistoryCollectionName });
+
+if (!taskHistoryExists) {
+  await client.createCollection({
+    collection_name: taskHistoryCollectionName,
+    enable_dynamic_field: false,
+    fields: [
+      { name: "taskId", data_type: DataType.VarChar, is_primary_key: true, max_length: 36 },
+      { name: "projectId", data_type: DataType.VarChar, max_length: 36 },
+      { name: "embedding", data_type: DataType.FloatVector, dim: 1536 },
+      { name: "indexedAt", data_type: DataType.Int64 },
+    ],
+  });
+}
+
+const { index_descriptions: taskHistoryIndexes } = await client.describeIndex({
+  collection_name: taskHistoryCollectionName,
+  field_name: "embedding",
+});
+
+if (taskHistoryIndexes.length === 0) {
+  await client.createIndex({
+    collection_name: taskHistoryCollectionName,
+    field_name: "embedding",
+    index_name: "task_history_embedding_hnsw",
+    index_type: "HNSW",
+    metric_type: "COSINE",
+    params: { M: 16, efConstruction: 200 },
+  });
+}
+
+await client.loadCollection({ collection_name: taskHistoryCollectionName });

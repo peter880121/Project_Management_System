@@ -96,25 +96,41 @@ model Project {
 }
 
 model Task {
-  id            String       @id @default(uuid()) @db.Char(36)
-  projectId     String       @db.Char(36)
-  assigneeId    String?      @db.Char(36)
-  title         String       @db.VarChar(191)
-  description   String?      @db.Text
-  status        TaskStatus   @default(TODO)
-  estimateHours Decimal?     @db.Decimal(8, 2)
-  dueDate       DateTime?    @db.DateTime(3)
-  createdAt     DateTime     @default(now()) @db.DateTime(3)
-  updatedAt     DateTime     @updatedAt @db.DateTime(3)
-  project       Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  assignee      User?        @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
-  requirementId String?      @db.Char(36)
-  requirement   Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  id            String           @id @default(uuid()) @db.Char(36)
+  projectId     String           @db.Char(36)
+  assigneeId    String?          @db.Char(36)
+  title         String           @db.VarChar(191)
+  description   String?          @db.Text
+  status        TaskStatus       @default(TODO)
+  estimateHours Decimal?         @db.Decimal(8, 2)
+  actualHours   Decimal?         @db.Decimal(8, 2)
+  completedAt   DateTime?        @db.DateTime(3)
+  dueDate       DateTime?        @db.DateTime(3)
+  createdAt     DateTime         @default(now()) @db.DateTime(3)
+  updatedAt     DateTime         @updatedAt @db.DateTime(3)
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assignee      User?            @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  requirementId String?          @db.Char(36)
+  requirement   Requirement?     @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  dependencies  TaskDependency[] @relation("TaskDependencies")
+  blockedBy     TaskDependency[] @relation("TaskPrerequisites")
 
   @@index([projectId, status])
   @@index([assigneeId, status])
   @@index([dueDate, status])
   @@index([requirementId, status])
+}
+
+model TaskDependency {
+  id              String   @id @default(uuid()) @db.Char(36)
+  taskId          String   @db.Char(36)
+  dependsOnTaskId String   @db.Char(36)
+  createdAt       DateTime @default(now()) @db.DateTime(3)
+  task            Task     @relation("TaskDependencies", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn       Task     @relation("TaskPrerequisites", fields: [dependsOnTaskId], references: [id], onDelete: Restrict)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@index([dependsOnTaskId])
 }
 
 model Requirement {

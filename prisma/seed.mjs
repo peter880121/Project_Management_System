@@ -28,7 +28,10 @@ const tasks = Array.from({ length: 24 }, (_, index) => {
     description: "Synthetic delivery work item. Contains no patient or production data.",
     status: state,
     estimateHours: 2 + (index % 7) * 1.5,
+    actualHours: state === "DONE" ? 4 + (index % 6) * 1.25 : null,
+    completedAt: state === "DONE" ? new Date("2026-10-12T00:00:00.000Z") : null,
     dueDate: new Date(Date.UTC(2026, 10 + Math.floor(index / 12), (index % 25) + 1)),
+    createdAt: new Date(Date.UTC(2026, 8, 1 + index)),
   };
 });
 
@@ -44,6 +47,9 @@ async function main() {
 
     for (const task of tasks) {
       await tx.task.upsert({ where: { id: task.id }, create: task, update: {} });
+      if (task.status === "DONE") {
+        await tx.task.updateMany({ where: { id: task.id, status: "DONE", actualHours: null }, data: { actualHours: task.actualHours, completedAt: task.completedAt, createdAt: task.createdAt } });
+      }
     }
 
     for (let projectIndex = 0; projectIndex < projects.length; projectIndex += 1) {

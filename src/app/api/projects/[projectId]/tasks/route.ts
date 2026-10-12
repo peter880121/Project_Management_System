@@ -24,7 +24,11 @@ export async function GET(_request: Request, context: { params: Promise<{ projec
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   const data = await prisma.task.findMany({
     where: { projectId },
-    include: { assignee: { select: { id: true, name: true } }, requirement: { select: { id: true, title: true } } },
+    include: {
+      assignee: { select: { id: true, name: true } },
+      requirement: { select: { id: true, title: true } },
+      dependencies: { include: { dependsOn: { select: { id: true, title: true, status: true } } } },
+    },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
   return NextResponse.json({ data });

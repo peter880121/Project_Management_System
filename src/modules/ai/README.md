@@ -1,3 +1,7 @@
 # AI agents
 
-Keep model integration and agent workflows in this module. Record retrieval query, matched IDs, latency, and fallback status. AI output requires human confirmation.
+Keep model integration and agent workflows in this module. The WBS agent uses LangChain ChatOpenAI, ChatAnthropic, or ChatGoogleGenerativeAI selected by `AI_PROVIDER`/`AI_MODEL`. Text embeddings use OpenAI `text-embedding-3-small` at 1536 dimensions, so `OPENAI_API_KEY` is required for vector retrieval even when another chat provider is selected.
+
+The WBS prompt sends only the user's requirement and completed-task evidence from the current project. The UI requires confirmation that inputs contain synthetic data only, and the API rejects common email, phone, and labeled patient-identifier patterns. This is a guard against accidental disclosure, not a substitute for synthetic-only handling. The agent records a redacted request summary, provider/model, retrieval IDs, retrieval degradation, model latency, and review outcome. Every proposed task is a separate `AiSuggestion` in `PENDING`; no generation path writes a `Task`. PMs accept or reject tasks one at a time. A task with prerequisites can be accepted after those prerequisite suggestions have been accepted.
+
+Milvus failures and empty/unindexed collections fall back to parameterized MySQL keyword search over completed tasks with actual hours. MySQL hits are opportunistically indexed for later vector retrieval. Failed vector writes are stored in `SyncFailure` with a bounded retry count. If a model is unavailable or returns invalid output, the agent records the failure and asks the PM to create tasks manually.

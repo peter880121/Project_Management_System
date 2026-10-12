@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma, Role, TaskStatus } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { canTransitionTaskStatus } from "@/modules/tasks/status";
 
@@ -11,7 +12,19 @@ export type AuditAction =
   | "DATA_EXPORTED"
   | "AI_SUGGESTION_ACCEPTED"
   | "AI_SUGGESTION_REJECTED"
+  | "AI_WBS_GENERATED"
+  | "AI_WBS_GENERATION_FAILED"
   | "RAG_SEARCH";
+
+const acceptedWbsPayloadSchema = z.object({
+  title: z.string().min(1).max(191),
+  description: z.string().max(5000),
+  estimateHours: z.number().finite().positive().max(10_000),
+  suggestedRole: z.enum(["PM", "MEMBER", "QA", "ADMIN"]),
+  dependencyIds: z.array(z.uuid()).max(30),
+  dependencyTitles: z.array(z.string()).max(30),
+  taskId: z.uuid().optional(),
+}).strict();
 
 export async function createTask(input: {
   projectId: string;
@@ -82,16 +95,21 @@ export async function recordAudit(tx: Prisma.TransactionClient, event: AuditEven
 export async function changeTaskStatus(input: {
   taskId: string;
   status: TaskStatus;
+  actualHours?: number;
   actorId: string;
 } & AuditRequestMetadata) {
   return prisma.$transaction(async (tx) => {
     const task = await tx.task.findUnique({ where: { id: input.taskId } });
     if (!task) throw new Error("Task not found");
+    if (input.status === "DONE" && (!input.actualHours || input.actualHours <= 0 || !Number.isFinite(input.actualHours))) throw new Error("Actual hours are required to complete a task");
     if (task.status === input.status) throw new Error("Task status is unchanged");
     if (!canTransitionTaskStatus(task.status, input.status)) throw new Error(`Invalid task status transition: ${task.status} -> ${input.status}`);
     const changed = await tx.task.updateMany({
       where: { id: task.id, status: task.status },
-      data: { status: input.status },
+      data: {
+        status: input.status,
+        ...(input.status === "DONE" ? { actualHours: input.actualHours, completedAt: new Date() } : {}),
+      },
     });
     if (changed.count !== 1) throw new Error("Task changed concurrently; retry the operation");
     const updated = await tx.task.findUniqueOrThrow({ where: { id: task.id } });
@@ -101,12 +119,79 @@ export async function changeTaskStatus(input: {
       action: "TASK_STATUS_CHANGED",
       entityType: "Task",
       entityId: task.id,
-      before: { status: task.status },
-      after: { status: updated.status },
+      before: { status: task.status, actualHours: task.actualHours?.toString() ?? null, completedAt: task.completedAt?.toISOString() ?? null },
+      after: { status: updated.status, actualHours: updated.actualHours?.toString() ?? null, completedAt: updated.completedAt?.toISOString() ?? null },
       ip: input.ip,
       userAgent: input.userAgent,
     });
     return updated;
+  });
+}
+
+export async function acceptWbsSuggestion(input: {
+  suggestionId: string;
+  actorId: string;
+} & AuditRequestMetadata) {
+  return prisma.$transaction(async (tx) => {
+    const suggestion = await tx.aiSuggestion.findUnique({ where: { id: input.suggestionId } });
+    if (!suggestion) throw new Error("AI suggestion not found");
+    if (suggestion.type !== "WBS") throw new Error("Suggestion is not a WBS task");
+    if (suggestion.status !== "PENDING") throw new Error("AI suggestion has already been reviewed");
+
+    const parsedOutput = acceptedWbsPayloadSchema.safeParse(suggestion.output);
+    if (!parsedOutput.success) throw new Error("WBS suggestion has an invalid task payload");
+    const output = parsedOutput.data;
+    const dependencySuggestions = output.dependencyIds.length === 0 ? [] : await tx.aiSuggestion.findMany({
+      where: { id: { in: output.dependencyIds }, projectId: suggestion.projectId, type: "WBS", status: "ACCEPTED" },
+    });
+    if (dependencySuggestions.length !== output.dependencyIds.length) {
+      throw new Error("Accept or remove prerequisite suggestions before accepting this task");
+    }
+    const dependencyTaskIds = dependencySuggestions.flatMap((dependency) => {
+      const dependencyOutput = acceptedWbsPayloadSchema.safeParse(dependency.output);
+      return dependencyOutput.success && dependencyOutput.data.taskId ? [dependencyOutput.data.taskId] : [];
+    });
+    if (dependencyTaskIds.length !== output.dependencyIds.length) throw new Error("An accepted prerequisite is missing its task record");
+
+    const task = await tx.task.create({ data: {
+      projectId: suggestion.projectId,
+      title: output.title,
+      description: output.description,
+      estimateHours: output.estimateHours,
+    } });
+    if (dependencyTaskIds.length > 0) {
+      await tx.taskDependency.createMany({ data: dependencyTaskIds.map((dependsOnTaskId) => ({ id: randomUUID(), taskId: task.id, dependsOnTaskId })) });
+    }
+    const reviewedAt = new Date();
+    const changed = await tx.aiSuggestion.updateMany({
+      where: { id: suggestion.id, status: "PENDING" },
+      data: { status: "ACCEPTED", reviewedById: input.actorId, reviewedAt },
+    });
+    if (changed.count !== 1) throw new Error("AI suggestion was reviewed concurrently; refresh and retry");
+    const updatedOutput = { ...output, taskId: task.id } satisfies Prisma.InputJsonValue;
+    const updated = await tx.aiSuggestion.update({ where: { id: suggestion.id }, data: { output: updatedOutput } });
+    await recordAudit(tx, {
+      actorId: input.actorId,
+      projectId: suggestion.projectId,
+      action: "TASK_CREATED",
+      entityType: "Task",
+      entityId: task.id,
+      after: { title: task.title, status: task.status, estimateHours: task.estimateHours?.toString(), dependencies: dependencyTaskIds, aiSuggestionId: suggestion.id },
+      ip: input.ip,
+      userAgent: input.userAgent,
+    });
+    await recordAudit(tx, {
+      actorId: input.actorId,
+      projectId: suggestion.projectId,
+      action: "AI_SUGGESTION_ACCEPTED",
+      entityType: "AiSuggestion",
+      entityId: suggestion.id,
+      before: { status: suggestion.status },
+      after: { status: updated.status, reviewedById: input.actorId, taskId: task.id },
+      ip: input.ip,
+      userAgent: input.userAgent,
+    });
+    return { suggestion: updated, task };
   });
 }
 
