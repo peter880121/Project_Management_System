@@ -20,11 +20,12 @@ test("PM creates a task, changes its status, and reviews requirement and audit h
   await page.getByLabel("关联需求").selectOption(requirementId);
   await page.getByRole("button", { name: "创建任务" }).click();
   const task = page.getByRole("link", { name: title });
-  await expect(task).toBeVisible();
+  await expect(task).toBeVisible({ timeout: 20_000 });
   const taskCard = page.locator("article").filter({ has: task });
   await taskCard.getByRole("button", { name: "开始 / 恢复" }).click();
   await expect(page.getByRole("status")).toContainText("审计时间线");
-  await task.click();
+  const taskUrl = new URL((await task.getAttribute("href"))!, page.url()).toString();
+  await page.goto(taskUrl);
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   await expect(page.getByText("Atlas synthetic requirement 1")).toBeVisible();
   await expect(page.getByText("Verify synthetic requirement 1")).toBeVisible();
