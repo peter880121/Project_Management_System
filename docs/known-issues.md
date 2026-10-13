@@ -22,3 +22,9 @@
 ## P3：E2E 测试积累 Session 行
 
 任务 E2E 通过登录 API 创建真实 Session，目前 fixture 不清理 Session 行。登录时会惰性删除该用户已过期的 Session；`prisma migrate reset` 会清空测试数据库，但单独运行 `pnpm db:seed` 不会清理 Session。未来可在 E2E `afterAll` 清理测试 Session，或增加定时清理任务。
+
+## P3：E2E 前需确保没有手动 dev server 在跑
+
+- **现象：** 如果本地手动运行着 `pnpm dev`，Playwright 会复用该 server；测试通过后进程可能不退出，因为 Playwright 只会关闭自己启动的 server。
+- **规避：** 运行 `pnpm test:e2e` 前，先确保没有其他 `pnpm dev` 在运行。
+- **可选改进：** 在 `test:e2e` 脚本中增加前置检查，或改用固定端口检测。
