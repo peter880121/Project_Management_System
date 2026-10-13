@@ -19,6 +19,9 @@ export default defineConfig({
           SESSION_SECRET:
             process.env.SESSION_SECRET ||
             "e2e-only-secret-not-for-production-00000000",
+          ...(process.env.LOCAL_DEV_SEED_PASSWORD
+            ? { LOCAL_DEV_SEED_PASSWORD: process.env.LOCAL_DEV_SEED_PASSWORD }
+            : {}),
         },
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,

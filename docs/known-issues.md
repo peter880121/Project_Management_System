@@ -18,3 +18,7 @@
 ## P3：PENDING 登录提示可能用于枚举邮箱
 
 登录 API 对 PENDING 账号明确返回“等待管理员激活”，该提示有助于用户理解后续流程，但也会确认对应邮箱已注册。MVP 接受该风险；上线前评估是否改为统一认证失败文案，或通过已验证的邮箱渠道通知账号状态。
+
+## P3：E2E 测试积累 Session 行
+
+任务 E2E 通过登录 API 创建真实 Session，目前 fixture 不清理 Session 行。登录时会惰性删除该用户已过期的 Session；`prisma migrate reset` 会清空测试数据库，但单独运行 `pnpm db:seed` 不会清理 Session。未来可在 E2E `afterAll` 清理测试 Session，或增加定时清理任务。

@@ -1,15 +1,22 @@
+// Prerequisites: run `pnpm db:seed` first, and set LOCAL_DEV_SEED_PASSWORD to the same value used by that seed.
 import { expect, test } from "@playwright/test";
-import { createSessionToken } from "../src/modules/auth/session-token";
 
-const pmId = "00000000-0000-4000-8000-000000000002";
 const projectId = "00000000-0000-4000-8000-000000000065";
 const requirementId = "00000000-0000-4000-8000-0000000000c9";
-const secret = process.env.SESSION_SECRET || "e2e-only-secret-not-for-production-00000000";
 
-test.beforeEach(async ({ context, baseURL }) => {
+test.beforeEach(async ({ page, baseURL }) => {
+  const password = process.env.LOCAL_DEV_SEED_PASSWORD;
+  if (!password) {
+    throw new Error("E2E 环境变量缺失：请设置 LOCAL_DEV_SEED_PASSWORD，且其值必须与运行 pnpm db:seed 时一致。");
+  }
   if (!baseURL) throw new Error("Playwright baseURL is required");
-  const token = createSessionToken(pmId, Date.now() + 60 * 60 * 1000, secret);
-  await context.addCookies([{ name: "medpm_session", value: token, url: baseURL, httpOnly: true, sameSite: "Lax" }]);
+  const response = await page.request.post(new URL("/api/auth/login", baseURL).toString(), {
+    data: { email: "pm@medpm.local", password },
+  });
+  if (!response.ok()) {
+    const responseBody = await response.text();
+    throw new Error(`E2E 登录失败：HTTP ${response.status()}，响应：${responseBody}`);
+  }
 });
 
 test("PM creates a task, changes its status, and reviews requirement and audit history", async ({ page }) => {
