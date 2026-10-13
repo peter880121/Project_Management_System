@@ -13,3 +13,6 @@ prisma/*.db-journal
 .venv/
 .corepack-cache/
 __pycache__/
+
+test-results/
+playwright-report/
