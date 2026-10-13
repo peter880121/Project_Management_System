@@ -74,7 +74,7 @@ export async function PATCH(request: Request) {
     }
   }
   if (!currentPasswordMatches) {
-    return NextResponse.json({ error: "当前密码不正确" }, { status: 401 });
+    return NextResponse.json({ error: "当前密码不正确" }, { status: 400 });
   }
 
   let newPasswordHash: string;

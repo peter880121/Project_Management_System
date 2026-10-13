@@ -95,7 +95,7 @@ describe("PATCH /api/users/me/password", () => {
 
     const response = await PATCH(requestFor({ currentPassword: "WrongPassword123", newPassword: "NewPassword456" }));
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "当前密码不正确" });
     expect(hashPasswordMock).not.toHaveBeenCalled();
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
