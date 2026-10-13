@@ -19,7 +19,8 @@ export type AuditAction =
   | "AI_RISK_SUGGESTION_HANDLED"
   | "AI_RISK_SUGGESTION_IGNORED"
   | "RAG_SEARCH"
-  | "LOGOUT";
+  | "LOGOUT"
+  | "PASSWORD_CHANGED";
 
 const acceptedWbsPayloadSchema = z.object({
   title: z.string().min(1).max(191),
