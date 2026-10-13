@@ -3,6 +3,7 @@ import {
   createDatabaseSessionCredential,
   createSessionToken,
   hashDatabaseSessionCredential,
+  rotateDatabaseSessionCredential,
   SESSION_TTL_SECONDS,
   verifyDatabaseSessionCredential,
   verifySessionToken,
@@ -52,6 +53,16 @@ describe("database-backed session credentials", () => {
     expect(created.tokenHash).toBe(hashDatabaseSessionCredential(created.sessionId, claims.secret));
     expect(created.tokenHash).toMatch(/^[a-f0-9]{64}$/);
     expect(createCredential().credential).not.toBe(created.credential);
+  });
+
+  it("rotates the secret and token hash while preserving the Session id", () => {
+    const original = createCredential();
+    const rotated = rotateDatabaseSessionCredential(original.sessionId, userId, Date.now() + 60_000, secret);
+    const claims = decodeClaims(rotated.credential);
+
+    expect(rotated.credential).not.toBe(original.credential);
+    expect(rotated.tokenHash).not.toBe(original.tokenHash);
+    expect(rotated.tokenHash).toBe(hashDatabaseSessionCredential(original.sessionId, claims.secret));
   });
 
   it("hashes the same session credential deterministically", () => {

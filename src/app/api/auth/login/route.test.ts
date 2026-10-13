@@ -14,7 +14,7 @@ const { tx, prismaMock, verifyPasswordMock, setCookieMock, createCredentialMock 
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/modules/auth/password", () => ({ verifyPassword: verifyPasswordMock }));
-vi.mock("@/modules/auth/session", () => ({ setDatabaseSessionCookie: setCookieMock }));
+vi.mock("@/modules/auth/session", () => ({ setSessionCookieFromCredential: setCookieMock }));
 vi.mock("@/modules/auth/session-token", () => ({
   createDatabaseSessionCredential: createCredentialMock,
   SESSION_TTL_SECONDS: 8 * 60 * 60,

@@ -85,8 +85,27 @@ export function createDatabaseSessionCredential(
   expiresAt: number,
   signingSecret = getSessionSecret(),
 ): { credential: string; sessionId: string; tokenHash: string } {
+  return createDatabaseSessionCredentialForId(randomUUID(), userId, expiresAt, signingSecret);
+}
+
+/** Rotate a database session's secret while preserving its Session.id. */
+export function rotateDatabaseSessionCredential(
+  sessionId: string,
+  userId: string,
+  expiresAt: number,
+  signingSecret = getSessionSecret(),
+): { credential: string; tokenHash: string } {
+  const rotated = createDatabaseSessionCredentialForId(sessionId, userId, expiresAt, signingSecret);
+  return { credential: rotated.credential, tokenHash: rotated.tokenHash };
+}
+
+function createDatabaseSessionCredentialForId(
+  sessionId: string,
+  userId: string,
+  expiresAt: number,
+  signingSecret: string,
+): { credential: string; sessionId: string; tokenHash: string } {
   requireSigningSecret(signingSecret);
-  const sessionId = randomUUID();
   const sessionSecret = randomBytes(32).toString("base64url");
   const parsed = databaseSessionClaimsSchema.safeParse({ sessionId, userId, secret: sessionSecret, expiresAt });
   const now = Date.now();

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { SYSTEM_USER_ID } from "@/lib/system-user";
 import { verifyPassword } from "@/modules/auth/password";
-import { setDatabaseSessionCookie } from "@/modules/auth/session";
+import { setSessionCookieFromCredential } from "@/modules/auth/session";
 import { recordFailedPasswordAttempt } from "@/modules/auth/login-policy";
 import { createDatabaseSessionCredential, SESSION_TTL_SECONDS } from "@/modules/auth/session-token";
 
@@ -213,6 +213,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "账号已锁定，请 15 分钟后重试" }, { status: 423 });
   }
 
-  await setDatabaseSessionCookie(credential.credential);
+  await setSessionCookieFromCredential(credential.credential);
   return NextResponse.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role } }, { status: 200 });
 }
