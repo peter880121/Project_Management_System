@@ -1,4 +1,4 @@
-# AGENTS.md — MedPM-AI
+# AGENTS.md — Project_Management_System
 
 ## 项目定位
 MedPM-AI 是一个面向医疗软件交付场景的 **AI 原生合规与效率平台**。
@@ -97,7 +97,7 @@ MedPM-AI 是一个面向医疗软件交付场景的 **AI 原生合规与效率�
 5. 不允许自动合并到 main，所有变更走分支和 PR 思路。
 
 ## 任务模板位置
-所有分阶段任务模板位于 `docs/prompts/`。
+所有分阶段任务模板位于 `docx/prompts/`。
 执行任务前，必须先读取对应 md 文件，并遵守其中的验收标准。
 不要一次性读取或执行所有模板，按编号顺序逐个执行。
 
