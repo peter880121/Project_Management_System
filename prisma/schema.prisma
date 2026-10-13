@@ -14,6 +14,12 @@ enum Role {
   QA
 }
 
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  PENDING
+}
+
 enum ProjectStatus {
   PLANNING
   ACTIVE
@@ -62,17 +68,54 @@ enum AiSuggestionType {
 }
 
 model User {
-  id                      String             @id @default(uuid()) @db.Char(36)
-  email                   String             @unique @db.VarChar(191)
-  name                    String             @db.VarChar(191)
-  role                    Role               @default(MEMBER)
-  createdAt               DateTime           @default(now()) @db.DateTime(3)
-  updatedAt               DateTime           @updatedAt @db.DateTime(3)
-  ownedProjects           Project[]          @relation("ProjectOwner")
+  id                      String               @id @default(uuid()) @db.Char(36)
+  email                   String               @unique @db.VarChar(191)
+  name                    String               @db.VarChar(191)
+  role                    Role                 @default(MEMBER)
+  passwordHash            String?              @db.VarChar(255)
+  isSystem                Boolean              @default(false)
+  status                  UserStatus           @default(PENDING)
+  lastLoginAt             DateTime?            @db.DateTime(3)
+  failedLoginCount        Int                  @default(0)
+  lockedUntil             DateTime?            @db.DateTime(3)
+  createdAt               DateTime             @default(now()) @db.DateTime(3)
+  updatedAt               DateTime             @updatedAt @db.DateTime(3)
+  ownedProjects           Project[]            @relation("ProjectOwner")
   tasks                   Task[]
-  reviewedRecommendations AIRecommendation[] @relation("RecommendationReviewer")
-  reviewedSuggestions     AiSuggestion[]     @relation("SuggestionReviewer")
+  reviewedRecommendations AIRecommendation[]   @relation("RecommendationReviewer")
+  reviewedSuggestions     AiSuggestion[]       @relation("SuggestionReviewer")
   auditLogs               AuditLog[]
+  sessions                Session[]
+  passwordResetTokens     PasswordResetToken[]
+
+  @@index([isSystem])
+}
+
+model Session {
+  id        String    @id @default(uuid()) @db.Char(36)
+  userId    String    @db.Char(36)
+  tokenHash String    @unique @db.Char(64)
+  expiresAt DateTime  @db.DateTime(3)
+  createdAt DateTime  @default(now()) @db.DateTime(3)
+  revokedAt DateTime? @db.DateTime(3)
+  ip        String?   @db.VarChar(45)
+  userAgent String?   @db.VarChar(512)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Char(36)
+  userId    String    @db.Char(36)
+  tokenHash String    @unique @db.Char(64)
+  expiresAt DateTime  @db.DateTime(3)
+  usedAt    DateTime? @db.DateTime(3)
+  createdAt DateTime  @default(now()) @db.DateTime(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
 }
 
 model Project {

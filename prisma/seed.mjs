@@ -1,15 +1,18 @@
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
+
+if (process.env.NODE_ENV === "production") {
+  throw new Error("seed 禁止在 production 运行");
+}
 
 const prisma = new PrismaClient();
 const id = (value) => `00000000-0000-4000-8000-${value.toString(16).padStart(12, "0")}`;
 const now = new Date("2026-10-12T00:00:00.000Z");
 
-const users = [
-  { id: id(1), email: "admin@example.test", name: "Synthetic Admin", role: "ADMIN" },
-  { id: id(2), email: "pm@example.test", name: "Synthetic Project Manager", role: "PM" },
-  { id: id(3), email: "member@example.test", name: "Synthetic Engineer", role: "MEMBER" },
-  { id: id(4), email: "qa@example.test", name: "Synthetic QA", role: "QA" },
-];
+const systemUserId = "00000000-0000-4000-8000-0000000000f0";
+const systemUserEmail = "auth-service@medpm.local";
+const seedPassword = process.env.LOCAL_DEV_SEED_PASSWORD;
 
 const projects = [
   { id: id(101), name: "Atlas Release Readiness", description: "Synthetic example: prepare a fictional scheduling product for a controlled release." },
@@ -36,9 +39,52 @@ const tasks = Array.from({ length: 24 }, (_, index) => {
 });
 
 async function main() {
+  if (!seedPassword || seedPassword.length < 8) {
+    throw new Error("Set LOCAL_DEV_SEED_PASSWORD to a value of at least 8 characters before seeding.");
+  }
+
+  // Hash before opening the transaction to avoid holding database locks while bcrypt runs.
+  const userPasswordHash = await bcrypt.hash(seedPassword, 12);
+  const systemPasswordHash = await bcrypt.hash(randomBytes(32).toString("base64url"), 12);
+  const users = [
+    { id: id(1), email: "admin@medpm.local", name: "Synthetic Admin", role: "ADMIN", passwordHash: userPasswordHash, status: "ACTIVE", isSystem: false },
+    { id: id(2), email: "pm@medpm.local", name: "Synthetic Project Manager", role: "PM", passwordHash: userPasswordHash, status: "ACTIVE", isSystem: false },
+    { id: id(3), email: "member@medpm.local", name: "Synthetic Engineer", role: "MEMBER", passwordHash: userPasswordHash, status: "ACTIVE", isSystem: false },
+    { id: id(4), email: "qa@medpm.local", name: "Synthetic QA", role: "QA", passwordHash: userPasswordHash, status: "ACTIVE", isSystem: false },
+    { id: id(5), email: "pending@medpm.local", name: "Synthetic Pending User", role: "MEMBER", passwordHash: userPasswordHash, status: "PENDING", isSystem: false },
+    { id: id(6), email: "disabled@medpm.local", name: "Synthetic Disabled User", role: "MEMBER", passwordHash: userPasswordHash, status: "DISABLED", isSystem: false },
+    { id: systemUserId, email: systemUserEmail, name: "MedPM authentication service", role: "MEMBER", passwordHash: systemPasswordHash, status: "DISABLED", isSystem: true },
+  ].map((user) => ({ ...user, lastLoginAt: null, failedLoginCount: 0, lockedUntil: null }));
+
   await prisma.$transaction(async (tx) => {
+    const legacySeedEmails = new Map([
+      [id(1), "admin@example.test"],
+      [id(2), "pm@example.test"],
+      [id(3), "member@example.test"],
+      [id(4), "qa@example.test"],
+    ]);
     for (const user of users) {
-      await tx.user.upsert({ where: { id: user.id }, create: user, update: {} });
+      const legacyEmail = legacySeedEmails.get(user.id);
+      if (!legacyEmail) continue;
+      await tx.user.updateMany({
+        where: { id: user.id, email: legacyEmail },
+        data: {
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          passwordHash: user.passwordHash,
+          isSystem: user.isSystem,
+          status: user.status,
+          lastLoginAt: null,
+          failedLoginCount: 0,
+          lockedUntil: null,
+        },
+      });
+    }
+
+    for (const user of users) {
+      const { id: userId, ...data } = user;
+      await tx.user.upsert({ where: { id: userId }, create: { id: userId, ...data }, update: {} });
     }
 
     for (const project of projects) {
@@ -131,6 +177,38 @@ async function main() {
       })),
       skipDuplicates: true,
     });
+
+    const remainingLegacyUsers = await tx.user.findMany({
+      where: { email: { endsWith: "@example.test" } },
+      select: {
+        email: true,
+        _count: {
+          select: {
+            auditLogs: true,
+            tasks: true,
+            ownedProjects: true,
+            reviewedSuggestions: true,
+            reviewedRecommendations: true,
+          },
+        },
+      },
+    });
+    const blockedLegacyUsers = remainingLegacyUsers.flatMap((user) => {
+      const references = [
+        ["AuditLog.actorId", user._count.auditLogs],
+        ["Task.assigneeId", user._count.tasks],
+        ["Project.ownerId", user._count.ownedProjects],
+        ["AiSuggestion.reviewedById", user._count.reviewedSuggestions],
+        ["AIRecommendation.reviewedById", user._count.reviewedRecommendations],
+      ]
+        .filter(([, count]) => count > 0)
+        .map(([relation, count]) => `${relation} (${count})`);
+      return references.length > 0 ? [`${user.email}: ${references.join(", ")}`] : [];
+    });
+    if (blockedLegacyUsers.length > 0) {
+      throw new Error(`Cannot remove legacy test users with foreign-key references: ${blockedLegacyUsers.join("; ")}`);
+    }
+    await tx.user.deleteMany({ where: { email: { endsWith: "@example.test" } } });
   }, { maxWait: 10_000, timeout: 30_000 });
 
 }

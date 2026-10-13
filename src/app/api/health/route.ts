@@ -21,7 +21,8 @@ async function check<T>(operation: () => Promise<T>): Promise<Check> {
 
 export async function GET() {
   const user = await getCurrentUser();
-  const denied = requireRole(user, ["ADMIN", "PM", "MEMBER", "QA"]);
+  if (!user) return NextResponse.json({ status: "ok" });
+  const denied = requireRole(user, ["ADMIN"]);
   if (denied) return denied;
 
   const mysql = await check(async () => {

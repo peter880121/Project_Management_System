@@ -12,7 +12,7 @@ Next.js 15 App Router、TypeScript strict、Tailwind CSS、shadcn/ui 基础配�
 2. 复制 `.env.example` 为 `.env`，按文件注释生成并设置 `SESSION_SECRET`（至少 32 个随机字节）。示例数据库凭据仅用于本地开发；部署前必须替换所有密码。
 3. 启动依赖：
 
-   ```bash
+   ```powershell
    docker compose up -d mysql etcd minio milvus
    ```
 
@@ -22,6 +22,7 @@ Next.js 15 App Router、TypeScript strict、Tailwind CSS、shadcn/ui 基础配�
    pnpm install
    pnpm db:generate
    pnpm db:deploy
+   $env:LOCAL_DEV_SEED_PASSWORD = "set-a-local-password"
    pnpm db:seed
    pnpm vector:init
    pnpm dev
@@ -30,6 +31,10 @@ Next.js 15 App Router、TypeScript strict、Tailwind CSS、shadcn/ui 基础配�
 5. 打开 `http://localhost:3000`。健康 API `http://localhost:3000/api/health` 也要求有效会话；Redis 可按需通过 `docker compose --profile async up -d redis` 启动。
 
 也可以用 `docker compose up --build` 启动整套服务。schema 更新后，本地用 `pnpm db:migrate --name <migration_name>` 生成并应用 migration，提交生成的 migration 目录；部署时运行 `pnpm db:deploy`。`pnpm db:seed` 通过事务写入固定 ID 的合成样例，可重复运行；`pnpm vector:init` 创建并加载 `documents` collection。第二阶段 migration 附有结构回滚 `down.sql`；它会删除第二阶段新增的数据，只应在可丢弃环境执行。Prisma 不会自动执行 down migration，生产回滚应使用前向修复 migration。
+
+## 认证数据准备
+
+`pnpm db:seed` 通过事务写入固定 ID 的合成样例，可重复运行。认证测试账号密码从 `LOCAL_DEV_SEED_PASSWORD` 读取（至少 8 个字符，不写入源码），账号为 `admin@medpm.local`、`pm@medpm.local`、`member@medpm.local`、`qa@medpm.local`、`pending@medpm.local`、`disabled@medpm.local`。system user 固定 ID 为 `00000000-0000-4000-8000-0000000000f0`，供系统审计事件关联。阶段 1 migration 允许旧账户的 `passwordHash` 暂时为空；数据完成回填后再通过单独 migration 改为必填。
 
 ## 关键设计
 
