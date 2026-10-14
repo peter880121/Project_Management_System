@@ -16,6 +16,9 @@ export default defineConfig({
         command: "pnpm dev",
         url: baseURL,
         env: {
+          ...(process.env.REGISTRATION_INVITE_CODE
+            ? { REGISTRATION_INVITE_CODE: process.env.REGISTRATION_INVITE_CODE }
+            : {}),
           SESSION_SECRET:
             process.env.SESSION_SECRET ||
             "e2e-only-secret-not-for-production-00000000",
