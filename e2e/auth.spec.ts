@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { expect, test, type Page } from "@playwright/test";
 import { hashPassword } from "../src/modules/auth/password";
@@ -20,7 +20,7 @@ test.beforeAll(async () => {
   if (!inviteCode) throw new Error("Set REGISTRATION_INVITE_CODE for registration E2E.");
   const passwordHash = await hashPassword(password);
   // Each test gets a distinct ACTIVE MEMBER; no shared seed account is modified.
-  for (const key of ["home", "next", "unsafe", "authenticated", "invalid", "pending", "locked", "duplicate", "network"]) {
+  for (const key of ["home", "next", "unsafe", "authenticated", "invalid", "pending", "locked", "duplicate", "network", "profile-errors", "profile-dual", "logout", "logout-failure", "profile-expired", "logout-expired", "password-network", "password-duplicate"]) {
     const user = await prisma.$transaction((tx) => tx.user.create({
       data: { email: `login-test-${runId}-${key}@medpm.local`, name: "Synthetic Login Test", passwordHash, status: "ACTIVE", role: "MEMBER" },
       select: { id: true, email: true },
@@ -203,8 +203,10 @@ test("valid invite creates ACTIVE without logging in or redirecting", async ({ p
   const email = registerEmail("active");
   await page.goto("/register");
   await fillRegistration(page, email);
-  await page.getByLabel("邀请码（可选）", { exact: true }).fill(inviteCode);
+  await page.getByLabel("邀请码（可选）", { exact: true }).fill(` ${inviteCode} `);
+  const requestPromise = page.waitForRequest("**/api/auth/register");
   await page.getByRole("button", { name: "注册", exact: true }).click();
+  expect((await requestPromise).postDataJSON().inviteCode).toBe(inviteCode);
   await expect(page.getByRole("status")).toHaveText("注册成功，请登录");
   await expect(page.locator("form")).toHaveCount(0);
   await expect(page).toHaveURL(/\/register$/);
@@ -304,4 +306,158 @@ test("registration navigation drops unsafe next and never carries passwords", as
   await page.getByRole("link", { name: "已有账号？去登录" }).click();
   await expect(page.getByLabel("密码", { exact: true })).toHaveValue("");
   await expectNoStoredPassword(page);
+});
+
+async function loginForProfile(page: Page, key: string) {
+  const response = await page.request.post("/api/auth/login", { data: { email: account(key).email, password } });
+  expect(response.ok()).toBe(true);
+  await page.goto("/profile");
+  await expect(page.getByRole("heading", { name: "个人资料", exact: true })).toBeVisible();
+}
+
+async function fillPasswordChange(page: Page, newPassword: string) {
+  await page.getByLabel("当前密码", { exact: true }).fill(password);
+  await page.getByLabel("新密码", { exact: true }).fill(newPassword);
+  await page.getByLabel("确认新密码", { exact: true }).fill(newPassword);
+}
+
+test("unauthenticated profile redirects to login and home navigation shows guest links", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "登录", exact: true })).toBeVisible();
+  await page.goto("/profile");
+  await expect(page).toHaveURL(/\/login\?next=\/profile$/);
+});
+
+test("profile shows account information and validates password fields", async ({ page }) => {
+  await loginForProfile(page, "profile-errors");
+  await expect(page.getByRole("region", { name: "当前用户信息" })).toContainText(account("profile-errors").email);
+  await expect(page.getByRole("region", { name: "当前用户信息" })).toContainText("MEMBER");
+  await page.getByRole("button", { name: "修改密码", exact: true }).click();
+  await expect(page.getByText("请输入当前密码", { exact: true })).toBeVisible();
+  const newPassword = `${randomBytes(18).toString("hex")}Aa1`;
+  await fillPasswordChange(page, newPassword);
+  await page.getByLabel("确认新密码", { exact: true }).fill(`${newPassword}x`);
+  await page.getByRole("button", { name: "修改密码", exact: true }).click();
+  await expect(page.getByText("两次输入的密码不一致", { exact: true })).toBeVisible();
+  await page.getByLabel("确认新密码", { exact: true }).fill(newPassword);
+  await page.getByLabel("当前密码", { exact: true }).fill(`${password}-wrong`);
+  await page.getByRole("button", { name: "修改密码", exact: true }).click();
+  await expect(page.locator("#currentPassword-error")).toHaveText("当前密码不正确");
+  await expect(page.getByLabel("当前密码", { exact: true })).toBeFocused();
+});
+
+test("changing password keeps context A authenticated and rejects context B's captured old cookie", async ({ browser, baseURL }) => {
+  const a = await browser.newContext({ baseURL });
+  const b = await browser.newContext({ baseURL });
+  try {
+    for (const context of [a, b]) {
+      const response = await context.request.post("/api/auth/login", { data: { email: account("profile-dual").email, password } });
+      expect(response.ok()).toBe(true);
+      expect((await context.request.get("/api/auth/me")).status()).toBe(200);
+    }
+    // Capture B's credential BEFORE the password change. B never logs in again.
+    const oldCookiesB = await b.cookies();
+    const oldSessionB = oldCookiesB.find((cookie) => cookie.name === "medpm_session");
+    expect(oldSessionB).toBeDefined();
+    if (!oldSessionB) throw new Error("Missing context B session cookie");
+    const oldCookieHeaderB = `${oldSessionB.name}=${oldSessionB.value}`;
+    const oldSessionA = (await a.cookies()).find((cookie) => cookie.name === "medpm_session");
+    const pageA = await a.newPage();
+    const pageB = await b.newPage();
+    await pageA.goto("/profile");
+    await pageB.goto("/profile");
+    const newPassword = `${randomBytes(18).toString("hex")}Aa1`;
+    await fillPasswordChange(pageA, newPassword);
+    const changeRequest = pageA.waitForRequest("**/api/users/me/password");
+    await pageA.getByRole("button", { name: "修改密码", exact: true }).click();
+    expect((await changeRequest).postDataJSON()).not.toHaveProperty("confirmPassword");
+    await expect(pageA.getByRole("status")).toHaveText("密码已更新，当前设备保持登录，其他设备需要重新登录");
+    await expect(pageA).toHaveURL(/\/profile$/);
+    for (const label of ["当前密码", "新密码", "确认新密码"]) await expect(pageA.getByLabel(label, { exact: true })).toHaveValue("");
+    expect((await a.request.get("/api/auth/me")).status()).toBe(200);
+    const newSessionA = (await a.cookies()).find((cookie) => cookie.name === "medpm_session");
+    expect(newSessionA?.value !== oldSessionA?.value).toBe(true);
+    expect((await b.cookies()).find((cookie) => cookie.name === "medpm_session")?.value === oldSessionB.value).toBe(true);
+    // Explicit replay of the captured credential proves server invalidation, not local deletion.
+    expect((await b.request.get("/api/auth/me", { headers: { cookie: oldCookieHeaderB } })).status()).toBe(401);
+    await pageB.reload();
+    await expect(pageB).toHaveURL(/\/login\?next=\/profile$/);
+    await pageA.reload();
+    await expect(pageA.getByRole("heading", { name: "个人资料", exact: true })).toBeVisible();
+    const storage = await pageA.evaluate(() => ({ ls: JSON.stringify(localStorage), ss: JSON.stringify(sessionStorage), url: location.href }));
+    for (const value of Object.values(storage)) { expect(value).not.toContain(password); expect(value).not.toContain(newPassword); }
+    await pageA.goto("/");
+    await expect(pageA.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "个人资料", exact: true })).toBeVisible();
+  } finally { await a.close(); await b.close(); }
+});
+
+test("logout goes to login and protected profile cannot be reopened", async ({ page }) => {
+  await loginForProfile(page, "logout");
+  await page.getByRole("button", { name: "登出", exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  expect((await page.request.get("/api/auth/me")).status()).toBe(401);
+  await page.goto("/profile");
+  await expect(page).toHaveURL(/\/login\?next=\/profile$/);
+});
+
+test("failed logout stays on profile and permits retry", async ({ page }) => {
+  await loginForProfile(page, "logout-failure");
+  await page.route("**/api/auth/logout", (route) => route.fulfill({ status: 500, json: { error: "登出失败，请重试" } }));
+  await page.getByRole("button", { name: "登出", exact: true }).click();
+  await expect(page.getByRole("region", { name: "登出账号", exact: true }).getByRole("alert")).toHaveText("登出失败，请重试");
+  await expect(page).toHaveURL(/\/profile$/);
+  expect((await page.request.get("/api/auth/me")).status()).toBe(200);
+  await expect(page.getByRole("button", { name: "登出", exact: true })).toBeEnabled();
+  await page.unroute("**/api/auth/logout");
+  await page.getByRole("button", { name: "登出", exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+});
+
+async function revokeAccountSessions(key: string) {
+  await prisma.$transaction((tx) => tx.session.updateMany({ where: { userId: account(key).id, revokedAt: null }, data: { revokedAt: new Date() } }));
+}
+
+test("expired profile session clears password inputs and offers login", async ({ page }) => {
+  await loginForProfile(page, "profile-expired");
+  await revokeAccountSessions("profile-expired");
+  await fillPasswordChange(page, `${randomBytes(18).toString("hex")}Aa1`);
+  await page.getByRole("button", { name: "修改密码", exact: true }).click();
+  await expect(page.locator("form").getByRole("alert")).toHaveText("当前会话已失效，请重新登录后重试");
+  for (const label of ["当前密码", "新密码", "确认新密码"]) await expect(page.getByLabel(label, { exact: true })).toHaveValue("");
+  await page.getByRole("link", { name: "重新登录", exact: true }).click();
+  await expect(page).toHaveURL(/\/login\?next=\/profile$/);
+});
+
+test("logout with an already invalid session still takes the user to login", async ({ page }) => {
+  await loginForProfile(page, "logout-expired");
+  await revokeAccountSessions("logout-expired");
+  await page.getByRole("button", { name: "登出", exact: true }).click();
+  await expect(page).toHaveURL(/\/login$/);
+});
+
+test("uncertain password result clears secrets and asks for logout before signing in", async ({ page }) => {
+  await loginForProfile(page, "password-network");
+  await page.route("**/api/users/me/password", (route) => route.abort("failed"));
+  await fillPasswordChange(page, `${randomBytes(18).toString("hex")}Aa1`);
+  await page.getByRole("button", { name: "修改密码", exact: true }).click();
+  await expect(page.locator("form").getByRole("alert")).toHaveText("无法确认密码修改结果，请先登出，再重新登录确认");
+  await expect(page.getByLabel("新密码", { exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "登出", exact: true })).toBeEnabled();
+});
+
+test("password change prevents repeated submits and concurrent logout", async ({ page }) => {
+  let requests = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await loginForProfile(page, "password-duplicate");
+  await page.route("**/api/users/me/password", async (route) => { requests += 1; await gate; await route.continue(); });
+  await fillPasswordChange(page, `${randomBytes(18).toString("hex")}Aa1`);
+  try {
+    await page.getByRole("button", { name: "修改密码", exact: true }).click();
+    await expect(page.getByRole("button", { name: "修改中…" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "登出", exact: true })).toBeDisabled();
+    await page.locator("form").evaluate((form: HTMLFormElement) => { form.requestSubmit(); form.requestSubmit(); });
+    expect(requests).toBe(1);
+  } finally { release(); }
+  await expect(page.getByRole("status")).toHaveText("密码已更新，当前设备保持登录，其他设备需要重新登录");
 });

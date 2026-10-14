@@ -32,3 +32,9 @@ auth spec 每次运行创建独立合成账号，邮箱格式为 `login-test-*@m
 - **现象：** 如果本地手动运行着 `pnpm dev`，Playwright 会复用该 server；测试通过后进程可能不退出，因为 Playwright 只会关闭自己启动的 server。
 - **规避：** 运行 `pnpm test:e2e` 前，先确保没有其他 `pnpm dev` 在运行。
 - **可选改进：** 在 `test:e2e` 脚本中增加前置检查，或改用固定端口检测。
+
+## P3：Windows 下 Playwright 启动的 dev server 偶发关闭卡住
+
+- **现象：** Windows 本地运行中，测试用例已全部完成，但 Playwright 在关闭自身启动的 Next.js dev server 时偶发不退出；根因尚未确认。
+- **Workaround：** 先启动 dev server，再设置 `E2E_BASE_URL=http://localhost:4000` 运行 E2E，复用已启动的服务，避开 Playwright 的启动/关闭流程。测试后由启动方关闭服务。
+- **CI：** 使用此 workaround 时，CI 环境需要预先启动 dev server、等待就绪，并设置 `E2E_BASE_URL`；CI 负责在结束时关闭服务。服务与测试进程须使用一致的数据库、SESSION_SECRET、测试密码及邀请码配置。
