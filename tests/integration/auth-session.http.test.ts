@@ -6,7 +6,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { SYSTEM_USER_ID } from "@/lib/system-user";
 import { hashPassword, verifyPassword } from "@/modules/auth/password";
-import { verifyDatabaseSessionCredential } from "@/modules/auth/session-token";
+import { createSessionToken, verifyDatabaseSessionCredential } from "@/modules/auth/session-token";
 
 const databaseName = `medpm_auth_session_it_${randomUUID().replaceAll("-", "")}`;
 if (!process.env.DATABASE_URL || !process.env.MYSQL_ROOT_PASSWORD) {
@@ -181,6 +181,19 @@ describe.sequential("Session APIs over HTTP with real MySQL", () => {
     expect(Object.keys(payload.user).sort()).toEqual(["id", "email", "name", "role", "status", "lastLoginAt"].sort());
     expect(payload.user).toMatchObject({ id: userId, email, role: "PM", status: "ACTIVE" });
     expect(payload.user.lastLoginAt).toBeTruthy();
+  });
+
+  it("rejects the same valid legacy cookie on a protected route after the user is disabled", async () => {
+    const legacyCookie = `medpm_session=${createSessionToken(userId, Date.now() + 60_000, signingSecret)}`;
+    // This route relies on getCurrentUser alone; /auth/me has an additional status check.
+    expect(await db.session.count({ where: { userId } })).toBe(0);
+    expect((await http("/api/projects", "GET", legacyCookie)).status).toBe(200);
+
+    await db.$transaction((tx) => tx.user.update({ where: { id: userId }, data: { status: "DISABLED" } }));
+
+    const response = await http("/api/projects", "GET", legacyCookie);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Authentication required" });
   });
 
   it("password change rotates its Session, revokes others and writes one audit", async () => {

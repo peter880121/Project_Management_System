@@ -104,8 +104,10 @@ export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
   const claims = verifySessionToken(token, secret);
   if (!claims) return null;
 
-  return prisma.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: { id: claims.userId },
-    select: { id: true, role: true },
+    select: { id: true, role: true, status: true },
   });
+  if (!user || user.status !== "ACTIVE") return null;
+  return { id: user.id, role: user.role };
 }

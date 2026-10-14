@@ -73,10 +73,21 @@ describe("getCurrentUser cookie transition", () => {
   it("continues to accept an unexpired legacy cookie during the transition", async () => {
     const legacyCookie = createSessionToken(userId, Date.now() + SESSION_TTL_SECONDS * 1000, signingSecret);
     getCookieMock.mockReturnValue({ value: legacyCookie });
-    prismaMock.user.findUnique.mockResolvedValue({ id: userId, role: "PM" });
+    prismaMock.user.findUnique.mockResolvedValue({ id: userId, role: "PM", status: "ACTIVE" });
 
     await expect(getCurrentUser()).resolves.toEqual({ id: userId, role: "PM" });
     expect(prismaMock.user.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: userId } }));
+  });
+
+  it.each(["DISABLED", "PENDING"])("rejects a valid legacy cookie when the user is %s", async (status) => {
+    getCookieMock.mockReturnValue({ value: createSessionToken(userId, Date.now() + 60_000, signingSecret) });
+    prismaMock.user.findUnique.mockResolvedValue({ id: userId, role: "PM", status });
+
+    await expect(getCurrentUser()).resolves.toBeNull();
+    expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+      where: { id: userId },
+      select: { id: true, role: true, status: true },
+    });
   });
 
   it("resolves a valid database cookie to userId and sessionId", async () => {
