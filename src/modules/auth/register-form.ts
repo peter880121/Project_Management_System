@@ -22,16 +22,17 @@ export function validateRegistration(values: RegisterValues): RegisterErrors {
   }
   if (!values.confirmPassword) errors.confirmPassword = "请再次输入密码";
   else if (values.password !== values.confirmPassword) errors.confirmPassword = "两次输入的密码不一致";
-  if (values.inviteCode.length > 256) errors.inviteCode = "邀请码不能超过 256 个字符";
+  if (values.inviteCode.trim().length > 256) errors.inviteCode = "邀请码不能超过 256 个字符";
   return errors;
 }
 
 export function buildRegistrationRequest(values: RegisterValues) {
+  const inviteCode = values.inviteCode.trim();
   return {
     name: values.name.trim(),
     email: values.email.trim(),
     password: values.password,
-    ...(values.inviteCode.trim() ? { inviteCode: values.inviteCode } : {}),
+    ...(inviteCode ? { inviteCode } : {}),
   };
 }
 

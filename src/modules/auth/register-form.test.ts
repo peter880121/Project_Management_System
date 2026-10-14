@@ -11,9 +11,9 @@ describe("registration form validation and request", () => {
     expect(request).not.toHaveProperty("inviteCode");
     expect(request).not.toHaveProperty("confirmPassword");
   });
-  it("trims name and email but preserves a nonblank invite and password exactly", () => {
+  it("trims name, email and invite but preserves the password exactly", () => {
     expect(buildRegistrationRequest({ ...valid, name: " User ", email: " a@example.test ", password: " Password123 ", inviteCode: " invite " }))
-      .toEqual({ name: "User", email: "a@example.test", password: " Password123 ", inviteCode: " invite " });
+      .toEqual({ name: "User", email: "a@example.test", password: " Password123 ", inviteCode: "invite" });
   });
   it("reports each invalid field", () => {
     const errors = validateRegistration({ name: " ", email: "invalid", password: "short", confirmPassword: "", inviteCode: "a".repeat(257) });
