@@ -19,6 +19,11 @@ describe("home navigation", () => {
     const html = renderToStaticMarkup(await Home());
     expect(html).toContain('href="/profile"');
     expect(html).not.toContain('href="/login"');
+    expect(html).not.toContain('href="/users"');
+  });
+  it("offers user management only to ADMIN", async () => {
+    getUser.mockResolvedValue({ id: "admin", role: "ADMIN" });
+    expect(renderToStaticMarkup(await Home())).toContain('href="/users"');
   });
   it("keeps home content but does not claim logged out when identity lookup fails", async () => {
     getUser.mockRejectedValue(new Error("database unavailable"));
