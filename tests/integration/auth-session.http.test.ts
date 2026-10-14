@@ -163,6 +163,23 @@ describe.sequential("Session APIs over HTTP with real MySQL", () => {
     expect((await http("/api/auth/me", "GET", cookie)).status).toBe(401);
   });
 
+  it("PM reads only active non-system options and cannot read the admin user list", async () => {
+    const cookie = await login();
+    const ids: string[] = [randomUUID(), randomUUID(), randomUUID()];
+    await db.$transaction(async (tx) => {
+      for (const [index, status] of (["ACTIVE", "PENDING", "DISABLED"] as const).entries()) {
+        await tx.user.create({ data: { id: ids[index], email: `options-${ids[index]}@medpm.local`, name: "Synthetic Option", status, isSystem: index === 0 } });
+      }
+    });
+    const response = await http("/api/users/options", "GET", cookie);
+    expect(response.status).toBe(200);
+    const { data } = await response.json();
+    expect(data.some((item: { id: string }) => item.id === userId)).toBe(true);
+    for (const item of data) expect(Object.keys(item).sort()).toEqual(["email", "id", "name"]);
+    expect(data.some((item: { id: string }) => ids.includes(item.id))).toBe(false);
+    expect((await http("/api/users", "GET", cookie)).status).toBe(403);
+  });
+
   it("logout returns 200 and clears a cookie whose Session was already removed", async () => {
     const cookie = await login();
     await db.$transaction((tx) => tx.session.delete({ where: { id: claimsFor(cookie).sessionId } }));

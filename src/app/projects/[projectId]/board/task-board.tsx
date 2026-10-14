@@ -30,9 +30,10 @@ export function TaskBoard({ project, requirements, role, userId }: { project: { 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     if (role !== "PM") return;
-    void fetch("/api/users").then(async (response) => {
+    void fetch("/api/users/options").then(async (response) => {
       const payload = await response.json() as { data?: UserOption[] };
       if (response.ok) setUsers(payload.data || []);
+      else setError("成员列表加载失败");
     }).catch(() => setError("成员列表加载失败"));
   }, [role]);
 

@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const user = await getCurrentUser();
-  const denied = requireRole(user, ["PM"]);
+  const denied = requireRole(user, ["ADMIN"]);
   if (denied) return denied;
-  const data = await prisma.user.findMany({ select: { id: true, name: true, email: true }, orderBy: { name: "asc" } });
+  const data = await prisma.user.findMany({ where: { isSystem: false }, select: { id: true, name: true, email: true }, orderBy: { name: "asc" } });
   return NextResponse.json({ data });
 }
