@@ -65,10 +65,10 @@ export function UsersManager({ actorId, initial, query }: { actorId: string; ini
     {blocked && <p role="alert">会话或权限已变化，请刷新页面。<Link href="/login?next=/users" className="ml-2 text-teal-800 underline">前往登录</Link></p>}
     <form onSubmit={filter} className="rounded-xl border border-slate-200 bg-white p-4">
       <fieldset disabled={disabled} className="flex flex-wrap items-end gap-4">
-        <label className="text-sm">角色筛选<select name="role" defaultValue={query.role ?? ""} className="mt-1 block rounded-md border border-slate-300 p-2"><option value="">全部角色</option>{roles.map((role) => <option key={role}>{role}</option>)}</select></label>
-        <label className="text-sm">状态筛选<select name="status" defaultValue={query.status ?? ""} className="mt-1 block rounded-md border border-slate-300 p-2"><option value="">全部状态</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+        <div className="text-sm"><label htmlFor="filter-role">角色筛选</label><select id="filter-role" name="role" defaultValue={query.role ?? ""} className="mt-1 block rounded-md border border-slate-300 p-2"><option value="">全部角色</option>{roles.map((role) => <option key={role}>{role}</option>)}</select></div>
+        <div className="text-sm"><label htmlFor="filter-status">状态筛选</label><select id="filter-status" name="status" defaultValue={query.status ?? ""} className="mt-1 block rounded-md border border-slate-300 p-2"><option value="">全部状态</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select></div>
         <label className="text-sm">姓名或邮箱<input name="keyword" maxLength={191} defaultValue={query.keyword ?? ""} className="mt-1 block rounded-md border border-slate-300 p-2" /></label>
-        <label className="text-sm">每页数量<select name="pageSize" defaultValue={query.pageSize} className="mt-1 block rounded-md border border-slate-300 p-2">{[10, 20, 50, 100].map((size) => <option key={size}>{size}</option>)}{![10, 20, 50, 100].includes(query.pageSize) && <option>{query.pageSize}</option>}</select></label>
+        <div className="text-sm"><label htmlFor="filter-size">每页数量</label><select id="filter-size" name="pageSize" defaultValue={query.pageSize} className="mt-1 block rounded-md border border-slate-300 p-2">{[10, 20, 50, 100].map((size) => <option key={size}>{size}</option>)}{![10, 20, 50, 100].includes(query.pageSize) && <option>{query.pageSize}</option>}</select></div>
         <Button type="submit">查询</Button>
       </fieldset>
     </form>

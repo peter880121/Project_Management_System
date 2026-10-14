@@ -38,7 +38,7 @@ export function CreateUserDialog({ busy, onClose, onCreate }: { busy: boolean; o
       <fieldset disabled={busy} className="space-y-4">
         <FormField id="create-name" name="name" label="姓名" required error={errors.name} autoComplete="off" />
         <FormField id="create-email" name="email" label="邮箱" type="email" required error={errors.email} autoComplete="off" />
-        <label className="block text-sm font-medium">角色<select name="role" className="mt-2 block w-full rounded-md border border-slate-300 p-2" defaultValue="MEMBER">{roles.map((role) => <option key={role}>{role}</option>)}</select></label>
+        <div className="text-sm font-medium"><label htmlFor="create-role">角色</label><select id="create-role" name="role" className="mt-2 block w-full rounded-md border border-slate-300 p-2" defaultValue="MEMBER">{roles.map((role) => <option key={role}>{role}</option>)}</select></div>
         <FormField id="create-password" name="initialPassword" label="初始密码" type="password" autoComplete="new-password" required error={errors.initialPassword} help="至少 8 位，包含字母和数字，最多 72 字节。请通过受控渠道告知使用者。" />
         <SubmitButton pending={busy} label="确认创建" pendingLabel="创建中…" />
       </fieldset>
