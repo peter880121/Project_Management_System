@@ -29,6 +29,10 @@ test("PM creates a task, changes its status, and reviews requirement and audit h
   const task = page.getByRole("link", { name: title });
   await expect(task).toBeVisible({ timeout: 20_000 });
   const taskCard = page.locator("article").filter({ has: task });
+  const assignee = taskCard.getByRole("combobox", { name: `分配 ${title}` });
+  await expect(assignee.locator('option[value="00000000-0000-4000-8000-000000000003"]')).toHaveCount(1);
+  await assignee.selectOption("00000000-0000-4000-8000-000000000003");
+  await expect(taskCard.getByText("负责人：Synthetic Engineer", { exact: true })).toBeVisible();
   await taskCard.getByRole("button", { name: "开始 / 恢复" }).click();
   await expect(page.getByRole("status")).toContainText("审计时间线");
   const taskUrl = new URL((await task.getAttribute("href"))!, page.url()).toString();
@@ -39,4 +43,5 @@ test("PM creates a task, changes its status, and reviews requirement and audit h
   await expect(page.getByRole("heading", { name: "审计时间线" })).toBeVisible();
   await expect(page.getByText("TASK_CREATED")).toBeVisible();
   await expect(page.getByText("TASK_STATUS_CHANGED")).toBeVisible();
+  await expect(page.getByText("TASK_ASSIGNED")).toBeVisible();
 });

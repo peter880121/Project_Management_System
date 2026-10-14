@@ -21,9 +21,9 @@
 
 ## P3：E2E 积累 Session 和测试账号
 
-任务 E2E 通过登录 API 创建真实 Session，目前 fixture 不清理 Session 行。auth spec 在 `afterAll` 清理自身测试账号的所有 Session，并断言清理后为 0，不影响其他 spec。
+任务 E2E 通过登录 API 创建真实 Session，目前 fixture 不清理 Session 行。auth 和 users spec 在 `afterAll` 清理自身测试账号的所有 Session，并断言清理后为 0，不影响其他 spec。
 
-auth spec 每次运行创建独立合成账号，邮箱格式为 `login-test-*@medpm.local` 和 `register-test-*@medpm.local`。账号及其 AuditLog 保留以维持审计关联，因此账号会逐次积累；异常终止也可能跳过 Session 清理。
+auth 和 users spec 每次运行创建独立合成账号，邮箱格式为 `login-test-*@medpm.local`、`register-test-*@medpm.local` 和 `users-test-*@medpm.local`。两份 spec 都在 `afterAll` 清理自身 Session；账号及其 AuditLog 保留以维持审计关联，因此账号会逐次积累，异常终止也可能跳过 Session 清理。
 
 缓解：`prisma migrate reset` 会清空测试数据库（包括测试账号、Session 和审计记录），仅用于可丢弃的本地测试库，执行后需按项目流程重建测试数据。单独运行 `pnpm db:seed` 不会清理这些账号或 Session。登录时会惰性删除该用户已过期的 Session，未来可增加受控的测试数据清理流程。
 
