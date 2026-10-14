@@ -55,7 +55,7 @@ export async function POST(request: Request) {
 
   const input = parsed.data;
   const configuredInviteCode = process.env.REGISTRATION_INVITE_CODE;
-  const hasInviteCode = input.inviteCode !== undefined;
+  const hasInviteCode = !!input.inviteCode;
   if (hasInviteCode && (!configuredInviteCode || input.inviteCode !== configuredInviteCode)) {
     return errorResponse(400, "邀请码无效");
   }

@@ -46,6 +46,15 @@ describe("POST /api/auth/register", () => {
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ actorId: "new-user-id", action: "USER_REGISTERED" }) }));
   });
 
+  it("registers with an empty invite as PENDING", async () => {
+    process.env.REGISTRATION_INVITE_CODE = "synthetic-invite";
+    const response = await POST(requestFor({ name: "Synthetic User", email: "user@example.test", password: "Password123", inviteCode: "" }));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ message: "注册成功，等待管理员激活", status: "PENDING" });
+    expect(tx.user.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PENDING" }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "USER_REGISTERED" }) }));
+  });
+
   // Matching curl scenario: POST valid registration with configured REGISTRATION_INVITE_CODE.
   it("registers with the configured invite as ACTIVE", async () => {
     process.env.REGISTRATION_INVITE_CODE = "synthetic-invite";
