@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Prisma, Role, TaskStatus } from "@prisma/client";
+import type { Prisma, TaskStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { canTransitionTaskStatus } from "@/modules/tasks/status";
@@ -9,6 +9,8 @@ export type AuditAction =
   | "TASK_STATUS_CHANGED"
   | "TASK_ASSIGNED"
   | "PERMISSION_CHANGED"
+  | "USER_CREATED_BY_ADMIN"
+  | "USER_STATUS_CHANGED"
   | "DATA_EXPORTED"
   | "AI_SUGGESTION_ACCEPTED"
   | "AI_SUGGESTION_REJECTED"
@@ -224,35 +226,6 @@ export async function assignTask(input: {
       entityId: task.id,
       before: { assigneeId: task.assigneeId },
       after: { assigneeId: updated.assigneeId },
-      ip: input.ip,
-      userAgent: input.userAgent,
-    });
-    return updated;
-  });
-}
-
-export async function changeUserRole(input: {
-  userId: string;
-  role: Role;
-  actorId: string;
-} & AuditRequestMetadata) {
-  return prisma.$transaction(async (tx) => {
-    const user = await tx.user.findUnique({ where: { id: input.userId }, select: { id: true, role: true } });
-    if (!user) throw new Error("User not found");
-    if (user.role === input.role) throw new Error("User role is unchanged");
-    const changed = await tx.user.updateMany({
-      where: { id: user.id, role: user.role },
-      data: { role: input.role },
-    });
-    if (changed.count !== 1) throw new Error("User role changed concurrently; retry the operation");
-    const updated = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
-    await recordAudit(tx, {
-      actorId: input.actorId,
-      action: "PERMISSION_CHANGED",
-      entityType: "User",
-      entityId: user.id,
-      before: { role: user.role },
-      after: { role: updated.role },
       ip: input.ip,
       userAgent: input.userAgent,
     });
