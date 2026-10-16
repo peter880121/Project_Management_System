@@ -1,9 +1,11 @@
+import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/modules/auth/session";
 import { requireRole } from "@/modules/auth/rbac";
 import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 import { runComplianceAudit } from "@/modules/ai/compliance-audit/service";
+import { projectErrorResponse } from "@/modules/projects/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +19,7 @@ const requestSchema = z.object({
   if (value.from && value.to && Date.parse(value.from) > Date.parse(value.to)) context.addIssue({ code: "custom", path: ["to"], message: "to must be at or after from" });
 });
 
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["ADMIN", "QA"]);
   if (denied) return denied;
@@ -34,7 +36,9 @@ export async function POST(request: Request) {
       ...getAuditRequestMetadata(request),
     });
     return NextResponse.json(result);
-  } catch {
-    return NextResponse.json({ error: "Unable to complete compliance audit scan" }, { status: 500 });
+  } catch (error) {
+    return projectErrorResponse(error);
   }
 }
+
+export const POST = projectScoped(POSTHandler);

@@ -1,0 +1,45 @@
+import { randomUUID } from "node:crypto";
+import { PrismaClient } from "@prisma/client";
+import { expect, test } from "@playwright/test";
+import { hashPassword } from "../src/modules/auth/password";
+import { utcWeekStart } from "../src/modules/planning/rules";
+const db = new PrismaClient(); const runId = randomUUID(); const pmEmail = `planning-pm-${runId}@medpm.local`; const qaEmail = `planning-qa-${runId}@medpm.local`;
+let password: string; let projectId: string; let taskId: string; let memberId: string; const title = `Synthetic planning ${runId}`; const memberName = `Synthetic resource ${runId}`;
+const start = utcWeekStart(); const end = new Date(start.getTime() + 6 * 86400000); const week = start.toISOString().slice(0, 10); const due = end.toISOString().slice(0, 10);
+test.beforeAll(async () => {
+  password = process.env.LOCAL_DEV_SEED_PASSWORD || ""; if (!password) throw new Error("Set LOCAL_DEV_SEED_PASSWORD for planning E2E");
+  const passwordHash = await hashPassword(password);
+  await db.$transaction(async (tx) => {
+    const pm = await tx.user.create({ data: { email: pmEmail, name: "Synthetic planning PM", role: "PM", status: "ACTIVE", passwordHash } });
+    const qa = await tx.user.create({ data: { email: qaEmail, name: "Synthetic planning QA", role: "QA", status: "ACTIVE", passwordHash } });
+    memberId = (await tx.user.create({ data: { email: `planning-member-${runId}@medpm.local`, name: memberName, role: "MEMBER", status: "ACTIVE" } })).id;
+    projectId = (await tx.project.create({ data: { name: "Synthetic planning browser acceptance", ownerId: pm.id } })).id;
+    await tx.projectMember.createMany({ data: [qa.id, memberId].map((userId) => ({ projectId, userId })) });
+    const other = await tx.project.create({ data: { name: "Synthetic cross-project browser load", ownerId: pm.id } });
+    taskId = (await tx.task.create({ data: { projectId, title, assigneeId: memberId } })).id;
+    await tx.task.create({ data: { projectId: other.id, title: "Synthetic other-project load", assigneeId: memberId, plannedStartDate: start, dueDate: new Date(end.getTime() + 86400000 - 1), estimateHours: 30 } });
+  });
+});
+test.afterAll(async () => { try { await db.$transaction((tx) => tx.session.deleteMany({ where: { user: { email: { in: [pmEmail, qaEmail] } } } })); } finally { await db.$disconnect(); } });
+test("PM maintains planning/capacity, scans cross-project overload, and QA remains read-only", async ({ page }) => {
+  test.setTimeout(90000);
+  expect((await page.request.post("/api/auth/login", { data: { email: pmEmail, password } })).status()).toBe(200);
+  await page.goto(`/projects/${projectId}/planning`);
+  const task = page.locator("article").filter({ has: page.getByRole("link", { name: title, exact: true }) });
+  await task.getByLabel(`开始日期 ${title}`, { exact: true }).fill(week); await task.getByLabel(`截止日期 ${title}`, { exact: true }).fill(due); await task.getByLabel(`预计工时 ${title}`, { exact: true }).fill("30");
+  await task.getByRole("button", { name: "保存排期", exact: true }).click();
+  await expect.poll(async () => (await db.task.findUniqueOrThrow({ where: { id: taskId } })).scheduleVersion).toBe(1);
+  const member = page.locator("article").filter({ has: page.getByRole("heading", { name: memberName, exact: true }) });
+  await member.getByLabel(`本周容量 ${memberName}`, { exact: true }).fill("40"); await member.getByRole("button", { name: "保存容量", exact: true }).click();
+  await expect(member.getByText(/计划工时 60 小时 · 容量 40 小时 · 超出容量/)).toBeVisible();
+  await page.goto(`/projects/${projectId}/board`); await page.getByRole("button", { name: "扫描项目风险", exact: true }).click();
+  await expect(page.getByText(/跨项目计划工时 60 小时，超过已配置容量 40 小时/)).toBeVisible({ timeout: 15000 });
+  expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("TODO");
+  expect(await db.auditLog.count({ where: { entityId: taskId, action: "TASK_SCHEDULE_UPDATED" } })).toBe(1);
+  expect((await page.request.post("/api/auth/logout")).status()).toBe(200);
+  expect((await page.request.post("/api/auth/login", { data: { email: qaEmail, password } })).status()).toBe(200);
+  await page.goto(`/projects/${projectId}/planning`);
+  await expect(page.getByLabel(`预计工时 ${title}`, { exact: true })).toBeDisabled();
+  expect((await page.request.patch(`/api/tasks/${taskId}/schedule`, { data: { expectedVersion: 1, plannedStartDate: week, dueDate: due, estimateHours: 10, dependencyIds: [] } })).status()).toBe(403);
+  expect((await page.request.put(`/api/users/${memberId}/capacity`, { data: { weekStart: week, hours: 100, expectedVersion: 1 } })).status()).toBe(403);
+});

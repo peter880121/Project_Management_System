@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import type { WbsDocumentEvidence } from "@/modules/ai/wbs/types";
 
 type SuggestedTask = {
   id: string;
-  output: { title?: string; description?: string; estimateHours?: number; suggestedRole?: string; dependencyTitles?: string[] };
+  output: { title?: string; description?: string; estimateHours?: number; suggestedRole?: string; dependencyTitles?: string[]; sourceChunkIds?: string[] };
+  documentEvidence?: WbsDocumentEvidence[];
   history: { id: string; title: string; description: string | null; actualHours: number; deliveryDays: number }[];
 };
 
@@ -55,19 +58,20 @@ export function WbsPanel({ projectId, onAccepted }: { projectId: string; onAccep
 
   return <section className="mt-8 rounded-xl border border-indigo-200 bg-indigo-50/50 p-5" aria-label="WBS 分解 Agent">
     <h2 className="text-xl font-semibold">智能 WBS 分解</h2>
-    <p className="mt-2 max-w-3xl text-sm text-slate-600">Agent 会参考本项目已完成任务的实际工时与交付时间。生成内容进入待确认列表，只有 PM 逐条采纳后才会建立正式任务。</p>
+    <p className="mt-2 max-w-3xl text-sm text-slate-600">Agent 会参考本项目文档的需求与验收条件，以及已完成任务的实际工时与交付时间。生成内容进入待确认列表，只有 PM 逐条采纳后才会建立正式任务。</p>
     <form onSubmit={generate} className="mt-4 space-y-3">
       <label htmlFor="wbs-request" className="block text-sm font-medium">需求描述</label>
       <textarea id="wbs-request" minLength={10} maxLength={8000} required rows={4} value={request} onChange={(event) => setRequest(event.target.value)} className="w-full rounded-md border border-slate-300 bg-white p-3" placeholder="描述待拆解的软件交付需求、验收条件和约束……" />
-      <label className="flex items-start gap-2 text-sm text-slate-700"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} required className="mt-1"/><span>我确认输入仅包含合成数据，不含真实患者信息。此需求文本会发送给配置的模型服务。</span></label>
+      <label className="flex items-start gap-2 text-sm text-slate-700"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} required className="mt-1"/><span>我确认输入仅包含合成数据，不含真实患者信息。需求文本及检索命中的项目文档片段会发送给配置的模型服务。</span></label>
       <button disabled={busy || !confirmed} className="rounded-md bg-indigo-800 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-900 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "处理中…" : "生成 WBS 建议"}</button>
     </form>
     {error && <p role="alert" className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-    {notice && <p role="status" className="mt-3 rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">{notice}{degraded ? "（历史检索已降级为 MySQL 关键词匹配）" : ""}</p>}
+    {notice && <p role="status" className="mt-3 rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">{notice}{degraded ? "（部分证据检索已降级为 MySQL 关键词匹配）" : ""}</p>}
     {suggestions.length > 0 && <div className="mt-5 space-y-4"><h3 className="font-semibold">待确认任务（可逐条采纳）</h3>{suggestions.map((suggestion) => <article key={suggestion.id} className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-semibold">{suggestion.output.title}</h4><p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{suggestion.output.description}</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-900">待 PM 确认</span></div>
       <p className="mt-3 text-sm text-slate-600">建议工时：{suggestion.output.estimateHours} 小时 · 建议角色：{suggestion.output.suggestedRole}</p>
       {(suggestion.output.dependencyTitles?.length ?? 0) > 0 && <p className="mt-2 text-sm text-slate-600">依赖任务：{suggestion.output.dependencyTitles?.join("、")}</p>}
+      <div className="mt-4 rounded-md bg-slate-50 p-3"><h5 className="text-sm font-medium">提供给模型的文档证据</h5>{!suggestion.documentEvidence?.length && <p className="text-sm text-slate-500">没有可用文档证据，请核对需求与验收条件。</p>}{suggestion.documentEvidence?.map((source) => <div key={source.id} className="mt-2 text-sm"><Link className="text-teal-800 underline" href={`/projects/${projectId}/documents/chunks/${source.id}`}>{source.filename} · v{source.version} · {source.page === null ? "无页码" : `第 ${source.page} 页`}</Link><span className="ml-2 text-slate-600">{suggestion.output.sourceChunkIds?.includes(source.id) ? "模型引用了此片段，需人工核对" : "已提供上下文，模型未标注引用"}</span><p className="mt-1 whitespace-pre-wrap text-xs text-slate-600">{source.text}</p></div>)}</div>
       <div className="mt-4 rounded-md bg-slate-50 p-3"><h5 className="text-sm font-medium">依据的历史任务</h5>{suggestion.history.length === 0 ? <p className="mt-1 text-sm text-slate-500">没有找到包含实际工时的相似已完成任务；当前建议缺少本项目历史依据。</p> : <ul className="mt-2 space-y-2">{suggestion.history.map((historyTask) => <li key={historyTask.id} className="text-sm"><span className="font-medium">{historyTask.title}</span><span className="ml-2 text-slate-600">实际 {historyTask.actualHours} 小时 · 交付 {historyTask.deliveryDays} 天</span>{historyTask.description && <p className="mt-1 text-xs text-slate-500">{historyTask.description}</p>}</li>)}</ul>}</div>
       <div className="mt-4 flex gap-2"><button disabled={busy} onClick={() => void review(suggestion.id, "ACCEPTED")} className="rounded-md bg-teal-800 px-3 py-2 text-sm text-white disabled:opacity-50">采纳为任务</button><button disabled={busy} onClick={() => void review(suggestion.id, "REJECTED")} className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">拒绝</button></div>
     </article>)}</div>}

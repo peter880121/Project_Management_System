@@ -1,4 +1,50 @@
 services:
+  risk-worker:
+    profiles: ["risk"]
+    build: .
+    image: medpm-ai:local
+    command: ["pnpm", "risks:worker"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://${MYSQL_USER:-medpm}:${MYSQL_PASSWORD:-change-me-local-only}@mysql:3306/${MYSQL_DATABASE:-medpm}?charset=utf8mb4
+    depends_on:
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  document-worker:
+    profiles: ["parse"]
+    build: .
+    image: medpm-ai:local
+    command: ["pnpm", "documents:worker"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://${MYSQL_USER:-medpm}:${MYSQL_PASSWORD:-change-me-local-only}@mysql:3306/${MYSQL_DATABASE:-medpm}?charset=utf8mb4
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-medpm}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-change-me-local-only}
+      MINIO_BUCKET: ${MINIO_BUCKET:-medpm-documents}
+      MINERU_BASE_URL: ${MINERU_BASE_URL:-https://mineru.net/api/v4}
+      MINERU_API_KEY: ${MINERU_API_KEY:-}
+      MINERU_MODEL_VERSION: ${MINERU_MODEL_VERSION:-vlm}
+      MILVUS_ADDRESS: milvus:19530
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+
   migrate:
     build: .
     image: medpm-ai:local
@@ -18,9 +64,19 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      MINERU_MODEL_VERSION: ${MINERU_MODEL_VERSION:-vlm}
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in the environment or .env file}
       DATABASE_URL: mysql://${MYSQL_USER:-medpm}:${MYSQL_PASSWORD:-change-me-local-only}@mysql:3306/${MYSQL_DATABASE:-medpm}?charset=utf8mb4
       MILVUS_ADDRESS: milvus:19530
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      AI_MODEL: ${AI_MODEL:-}
+      LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: "false"

@@ -3,12 +3,14 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { lockBusinessActor } from "@/modules/auth/project-access";
 import { recordAudit, recordRagSearch } from "@/modules/audit/service";
 import type { AuditRequestMetadata } from "@/modules/audit/service";
 import { getConfiguredLlm } from "@/modules/ai/chat-model";
 import { retrieveHistoricalTasks, type HistoryRetrieval } from "./history";
-import { WBS_SYSTEM_PROMPT } from "./prompt";
-import { wbsResponseSchema, type WbsResponse } from "./types";
+import { searchProjectDocuments } from "@/modules/documents/rag-service";
+import { WBS_SYSTEM_PROMPT, WBS_DOCUMENT_INSTRUCTIONS } from "./prompt";
+import { wbsResponseSchema, type WbsResponse, type WbsDocumentEvidence } from "./types";
 
 export type WbsGenerationInput = {
   projectId: string;
@@ -19,6 +21,7 @@ export type WbsGenerationInput = {
 export type WbsGenerationResult = Readonly<{
   suggestions: { id: string; output: Prisma.JsonValue }[];
   historicalTasks: HistoryRetrieval["tasks"];
+  documentEvidence: WbsDocumentEvidence[];
   degraded: boolean;
   model: string;
   modelDurationMs: number;
@@ -51,23 +54,28 @@ export async function invokeWbsModel(
   request: string,
   historicalTasks: HistoryRetrieval["tasks"],
   invoke: (prompt: string) => Promise<string>,
+  documentEvidence: WbsDocumentEvidence[] = [],
 ): Promise<WbsResponse> {
   const context = JSON.stringify({ request, completedTaskHistory: historicalTasks.map((task) => ({
     title: task.title,
     description: task.description,
     actualHours: task.actualHours,
     deliveryDays: task.deliveryDays,
-  })) });
-  return parseWbsResponse(await invoke(context));
+  })), documentEvidence });
+  const response = parseWbsResponse(await invoke(context));
+  const allowed = new Set(documentEvidence.map((source) => source.id));
+  if (response.tasks.some((task) => task.sourceChunkIds.some((id) => !allowed.has(id)))) throw new Error("Model cited a document chunk outside the supplied evidence");
+  return response;
 }
 
 export async function generateOrEmpty(
   request: string,
   historicalTasks: HistoryRetrieval["tasks"],
   invoke: (prompt: string) => Promise<string>,
+  documentEvidence: WbsDocumentEvidence[] = [],
 ): Promise<{ tasks: WbsResponse["tasks"]; error?: string }> {
   try {
-    return { tasks: (await invokeWbsModel(request, historicalTasks, invoke)).tasks };
+    return { tasks: (await invokeWbsModel(request, historicalTasks, invoke, documentEvidence)).tasks };
   } catch (error) {
     return { tasks: [], error: error instanceof Error ? error.message : "LLM request failed" };
   }
@@ -111,7 +119,12 @@ async function invokeWithTimeout<T>(operation: Promise<T>, timeoutMs: number): P
 export async function generateWbsSuggestions(input: WbsGenerationInput): Promise<WbsGenerationResult> {
   const batchId = randomUUID();
   const summary = summarizeWbsInput(input.request);
-  const retrieval = await retrieveHistoricalTasks(input.projectId, summary);
+  const [retrieval, documents] = await Promise.all([
+    retrieveHistoricalTasks(input.projectId, summary),
+    searchProjectDocuments(input.projectId, { query: summary, limit: 4 }, { actorId: input.actorId, ip: input.ip, userAgent: input.userAgent }),
+  ]);
+  const documentEvidence: WbsDocumentEvidence[] = documents.hits.map(({ id, documentId, version, page, text, textSha256, filename }) => ({ id, documentId, version, page, text, textSha256, filename }));
+  const degraded = retrieval.degraded || documents.degraded;
   await recordRagSearch({
     actorId: input.actorId,
     projectId: input.projectId,
@@ -134,21 +147,21 @@ export async function generateWbsSuggestions(input: WbsGenerationInput): Promise
   } catch {
     const reason = "LLM_CONFIGURATION_MISSING_OR_INVALID";
     await saveGenerationFailure(input, batchId, summary, `${configuredProvider}:${configuredModel}`, 0, reason);
-    return { suggestions: [], historicalTasks: retrieval.tasks, degraded: retrieval.degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs: 0, manualFallback: true };
+    return { suggestions: [], historicalTasks: retrieval.tasks, documentEvidence, degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs: 0, manualFallback: true };
   }
 
   const modelStartedAt = Date.now();
   const generated = await generateOrEmpty(input.request, retrieval.tasks, async (context) => {
     const response = await invokeWithTimeout(model.invoke([
-      new SystemMessage(WBS_SYSTEM_PROMPT),
+      new SystemMessage(`${WBS_SYSTEM_PROMPT}\n${WBS_DOCUMENT_INSTRUCTIONS}`),
       new HumanMessage(context),
     ]), 30_000);
     return messageText(response.content);
-  });
+  }, documentEvidence);
   if (generated.error) {
     const durationMs = Date.now() - modelStartedAt;
     await saveGenerationFailure(input, batchId, summary, `${configuredProvider}:${configuredModel}`, durationMs, "LLM_REQUEST_OR_RESPONSE_VALIDATION_FAILED");
-    return { suggestions: [], historicalTasks: retrieval.tasks, degraded: retrieval.degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs: durationMs, manualFallback: true };
+    return { suggestions: [], historicalTasks: retrieval.tasks, documentEvidence, degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs: durationMs, manualFallback: true };
   }
   const tasks = generated.tasks;
   const modelDurationMs = Date.now() - modelStartedAt;
@@ -166,18 +179,22 @@ export async function generateWbsSuggestions(input: WbsGenerationInput): Promise
       retrievalDegraded: retrieval.degraded,
       retrievalDurationMs: retrieval.durationMs,
       modelDurationMs,
+      documentEvidence,
+      documentRetrieval: { hitIds: documents.hitIds, degraded: documents.degraded, mode: documents.mode, reason: documents.reason, durationMs: documents.durationMs },
     },
     output: {
       title: task.title,
       description: task.description,
       estimateHours: task.estimateHours,
       suggestedRole: task.suggestedRole,
+      sourceChunkIds: task.sourceChunkIds,
       dependencyIds: task.dependencies.map((dependencyIndex) => suggestionIds[dependencyIndex]),
       dependencyTitles: task.dependencies.map((dependencyIndex) => tasks[dependencyIndex]?.title).filter((title): title is string => Boolean(title)),
     },
   }));
 
   const saved = await prisma.$transaction(async (tx) => {
+    await lockBusinessActor(tx, input.actorId, ["PM"], input.projectId);
     const suggestions = await Promise.all(suggestionsData.map((data) => tx.aiSuggestion.create({ data })));
     await recordAudit(tx, {
       actorId: input.actorId,
@@ -185,12 +202,12 @@ export async function generateWbsSuggestions(input: WbsGenerationInput): Promise
       action: "AI_WBS_GENERATED",
       entityType: "WbsGeneration",
       entityId: batchId,
-      after: { inputSummary: summary, model: `${configuredProvider}:${configuredModel}`, durationMs: modelDurationMs, retrievalHitIds: retrieval.hitIds, degraded: retrieval.degraded, suggestionIds: suggestions.map((suggestion) => suggestion.id), result: "PENDING_CONFIRMATION" },
+      after: { inputSummary: summary, model: `${configuredProvider}:${configuredModel}`, durationMs: modelDurationMs, retrievalHitIds: retrieval.hitIds, documentHitIds: documents.hitIds, degraded, suggestionIds: suggestions.map((suggestion) => suggestion.id), result: "PENDING_CONFIRMATION" },
       ip: input.ip,
       userAgent: input.userAgent,
     });
     return suggestions.map((suggestion) => ({ id: suggestion.id, output: suggestion.output }));
   });
-  return { suggestions: saved, historicalTasks: retrieval.tasks, degraded: retrieval.degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs, manualFallback: false };
+  return { suggestions: saved, historicalTasks: retrieval.tasks, documentEvidence, degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs, manualFallback: false };
 }
 

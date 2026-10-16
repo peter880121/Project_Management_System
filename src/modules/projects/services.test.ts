@@ -1,0 +1,78 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ transaction: vi.fn(), audit: vi.fn(), project: vi.fn(), requirement: vi.fn(), testCase: vi.fn(), task: vi.fn() }));
+vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction } }));
+vi.mock("@/modules/audit/service", () => ({ recordAudit: mocks.audit }));
+vi.mock("@/modules/auth/project-access", async (importOriginal) => ({ ...await importOriginal<typeof import("@/modules/auth/project-access")>(), lockBusinessActor: vi.fn() }));
+vi.mock("./repositories", async (importOriginal) => ({ ...await importOriginal<typeof import("./repositories")>(), findProject: mocks.project, findRequirement: mocks.requirement, findTestCase: mocks.testCase, findTask: mocks.task }));
+import { createProject, saveTraceability } from "./services";
+
+const actor = { actorId: "pm", ip: "127.0.0.1", userAgent: "test" };
+const fields = { title: "Synthetic requirement", content: "Synthetic criteria", status: "DRAFT" as const };
+const tx = {
+  project: { create: vi.fn() },
+  requirement: { create: vi.fn(), updateMany: vi.fn() },
+  testCase: { create: vi.fn(), updateMany: vi.fn() },
+  task: { updateMany: vi.fn() },
+};
+describe("project and traceability transaction boundaries", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.transaction.mockImplementation((callback) => callback(tx));
+    mocks.project.mockResolvedValue({ id: "project" });
+    mocks.requirement.mockResolvedValue({ id: "requirement", ...fields, version: 2 });
+    tx.project.create.mockResolvedValue({ id: "project", status: "PLANNING" });
+    tx.requirement.create.mockResolvedValue({ id: "requirement", version: 1 });
+    tx.requirement.updateMany.mockResolvedValue({ count: 1 });
+    tx.testCase.create.mockResolvedValue({ id: "case", requirementId: "requirement" });
+    tx.testCase.updateMany.mockResolvedValue({ count: 1 });
+    tx.task.updateMany.mockResolvedValue({ count: 1 });
+  });
+  it("uses the actor as project owner and audits inside the same transaction", async () => {
+    await createProject({ name: "Synthetic project", description: "No PHI" }, actor);
+    expect(tx.project.create).toHaveBeenCalledWith({ data: { name: "Synthetic project", description: "No PHI", ownerId: "pm" } });
+    expect(mocks.audit).toHaveBeenCalledWith(tx, expect.objectContaining({ ...actor, action: "PROJECT_CREATED", projectId: "project" }));
+  });
+  it("propagates an audit failure out of the transaction callback", async () => {
+    mocks.audit.mockRejectedValue(new Error("audit unavailable"));
+    await expect(createProject({ name: "Synthetic", description: "" }, actor)).rejects.toThrow("audit unavailable");
+  });
+  it("records the original requirement content and advances its version conditionally", async () => {
+    await saveTraceability("project", { kind: "requirement", id: "requirement", expectedVersion: 2, ...fields, content: "Updated criteria" }, actor);
+    expect(tx.requirement.updateMany).toHaveBeenCalledWith({ where: { id: "requirement", projectId: "project", version: 2 }, data: { ...fields, content: "Updated criteria", version: { increment: 1 } } });
+    expect(mocks.audit).toHaveBeenCalledWith(tx, expect.objectContaining({ before: { ...fields, version: 2 }, after: { ...fields, content: "Updated criteria", version: 3 } }));
+  });
+  it("rejects stale requirement edits before auditing", async () => {
+    tx.requirement.updateMany.mockResolvedValue({ count: 0 });
+    await expect(saveTraceability("project", { kind: "requirement", id: "requirement", expectedVersion: 1, ...fields }, actor)).rejects.toMatchObject({ status: 409 });
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("rejects a test case for a requirement outside this project", async () => {
+    mocks.requirement.mockResolvedValue(null);
+    await expect(saveTraceability("project", { kind: "testCase", requirementId: "other", title: "Synthetic test", status: "NOT_RUN" }, actor)).rejects.toMatchObject({ status: 404 });
+    expect(mocks.requirement).toHaveBeenCalledWith(tx, "project", "other");
+    expect(tx.testCase.create).not.toHaveBeenCalled();
+  });
+  it("rejects linking a task to a requirement outside its project", async () => {
+    mocks.task.mockResolvedValue({ id: "task", requirementId: null });
+    mocks.requirement.mockResolvedValue(null);
+    await expect(saveTraceability("project", { kind: "task", id: "task", requirementId: "other", expectedRequirementId: null }, actor)).rejects.toMatchObject({ status: 404 });
+    expect(tx.task.updateMany).not.toHaveBeenCalled();
+  });
+  it("audits a removed task link", async () => {
+    mocks.task.mockResolvedValue({ id: "task", requirementId: "requirement" });
+    await saveTraceability("project", { kind: "task", id: "task", requirementId: null, expectedRequirementId: "requirement" }, actor);
+    expect(mocks.audit).toHaveBeenCalledWith(tx, expect.objectContaining({ entityType: "Task", action: "TASK_REQUIREMENT_CHANGED", before: expect.objectContaining({ requirementId: "requirement" }), after: { requirementId: null, reviewedRequirementVersion: null, requirementReviewedById: null, requirementReviewedAt: null } }));
+  });
+  it("rejects stale test results without auditing", async () => {
+    mocks.testCase.mockResolvedValue({ id: "case", title: "Synthetic test", status: "NOT_RUN", requirementId: "requirement" });
+    tx.testCase.updateMany.mockResolvedValue({ count: 0 });
+    await expect(saveTraceability("project", { kind: "testCase", id: "case", title: "Synthetic test", status: "PASSED", expectedUpdatedAt: "2026-10-15T00:00:00.000Z" }, actor)).rejects.toMatchObject({ status: 409 });
+    expect(mocks.testCase).toHaveBeenCalledWith(tx, "project", "case");
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("records QA result changes with original requirement provenance", async () => {
+    mocks.testCase.mockResolvedValue({ id: "case", title: "Synthetic test", status: "NOT_RUN", requirementId: "requirement" });
+    await saveTraceability("project", { kind: "testCase", id: "case", title: "Synthetic test", status: "PASSED", expectedUpdatedAt: "2026-10-15T00:00:00.000Z" }, actor);
+    expect(mocks.audit).toHaveBeenCalledWith(tx, expect.objectContaining({ action: "TEST_CASE_UPDATED", before: { title: "Synthetic test", status: "NOT_RUN", requirementId: "requirement" }, after: { title: "Synthetic test", status: "PASSED", requirementId: "requirement" } }));
+  });
+});

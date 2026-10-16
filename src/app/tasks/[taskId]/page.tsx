@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/modules/auth/session";
 import { requireRole } from "@/modules/auth/rbac";
+import { hasProjectAccess } from "@/modules/auth/project-access";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ tas
     },
   });
   if (!task) notFound();
+  if (!await hasProjectAccess(user!, task.projectId)) notFound();
   const audits = await prisma.auditLog.findMany({
     where: { entityType: "Task", entityId: task.id },
     include: { actor: { select: { id: true, name: true, role: true } } },

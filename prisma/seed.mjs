@@ -89,6 +89,14 @@ async function main() {
 
     for (const project of projects) {
       await tx.project.upsert({ where: { id: project.id }, create: project, update: {} });
+      // Explicit demo grants; rerunning seed must not reactivate a revoked grant.
+      for (const userId of [id(2), id(3), id(4)]) {
+        const prior = await tx.projectMember.findUnique({ where: { projectId_userId: { projectId: project.id, userId } } });
+        if (!prior) {
+          const membership = await tx.projectMember.create({ data: { projectId: project.id, userId } });
+          await tx.auditLog.create({ data: { actorId: systemUserId, projectId: project.id, action: "PROJECT_MEMBER_UPDATED", entityType: "ProjectMember", entityId: membership.id, after: { userId, active: true, version: 1, source: "SYNTHETIC_SEED" } } });
+        }
+      }
     }
 
     for (const task of tasks) {

@@ -1,3 +1,5 @@
+import { businessErrorResponse } from "@/modules/audit/errors";
+import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -14,7 +16,7 @@ const updateTaskSchema = z.union([
   z.object({ assigneeId: z.uuid().nullable() }).strict(),
 ]);
 
-export async function GET(_request: Request, context: { params: Promise<{ taskId: string }> }) {
+async function GETHandler(_request: Request, context: { params: Promise<{ taskId: string }> }) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["ADMIN", "PM", "MEMBER", "QA"]);
   if (denied) return denied;
@@ -38,7 +40,7 @@ export async function GET(_request: Request, context: { params: Promise<{ taskId
   return NextResponse.json({ data: { ...task, audits } });
 }
 
-export async function PATCH(request: Request, context: { params: Promise<{ taskId: string }> }) {
+async function PATCHHandler(request: Request, context: { params: Promise<{ taskId: string }> }) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["ADMIN", "PM", "MEMBER"]);
   if (denied) return denied;
@@ -59,7 +61,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
     try {
       const data = await assignTask({ taskId, assigneeId: parsed.data.assigneeId, actorId: user!.id, ...getAuditRequestMetadata(request) });
       return NextResponse.json({ data });
-    } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to assign task" }, { status: 409 }); }
+    } catch (error) { return businessErrorResponse(error); }
   }
   const targetStatus = parsed.data.status;
   if (user!.role === "MEMBER" && task.assigneeId !== user!.id) {
@@ -71,9 +73,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ taskI
   try {
     const data = await changeTaskStatus({ taskId, status: targetStatus, ...("actualHours" in parsed.data ? { actualHours: parsed.data.actualHours } : {}), actorId: user!.id, ...getAuditRequestMetadata(request) });
     return NextResponse.json({ data });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to update task";
-    const status = message === "Task not found" ? 404 : 409;
-    return NextResponse.json({ error: message }, { status });
-  }
+  } catch (error) { return businessErrorResponse(error); }
 }
+
+export const GET = projectScoped(GETHandler);
+export const PATCH = projectScoped(PATCHHandler);

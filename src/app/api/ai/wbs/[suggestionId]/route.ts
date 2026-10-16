@@ -1,3 +1,5 @@
+import { businessErrorResponse } from "@/modules/audit/errors";
+import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -10,7 +12,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const decisionSchema = z.object({ decision: z.enum(["ACCEPTED", "REJECTED"]) }).strict();
 
-export async function PATCH(request: Request, context: { params: Promise<{ suggestionId: string }> }) {
+async function PATCHHandler(request: Request, context: { params: Promise<{ suggestionId: string }> }) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["PM"]);
   if (denied) return denied;
@@ -29,9 +31,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ sugge
       ? await acceptWbsSuggestion(metadata)
       : await reviewAiSuggestion({ ...metadata, decision: "REJECTED" });
     return NextResponse.json({ data: result });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to review suggestion";
-    const status = message === "AI suggestion not found" ? 404 : message.startsWith("Accept or remove prerequisite") ? 409 : 409;
-    return NextResponse.json({ error: message }, { status });
-  }
+  } catch (error) { return businessErrorResponse(error); }
 }
+
+export const PATCH = projectScoped(PATCHHandler);

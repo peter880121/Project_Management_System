@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@10.18.3",
-  "engines": { "node": ">=20.9.0" },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev -p 4000",
     "build": "next build",
@@ -18,6 +20,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "node prisma/seed.mjs",
     "vector:init": "node src/modules/vector/init.mjs",
+    "documents:worker": "node scripts/document-worker.mjs",
+    "risks:worker": "node scripts/risk-worker.mjs",
     "db:studio": "prisma studio"
   },
   "dependencies": {
@@ -30,6 +34,7 @@
     "bcryptjs": "3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "fflate": "0.8.2",
     "lucide-react": "^0.468.0",
     "minio": "^8.0.5",
     "next": "15.5.27",
@@ -39,11 +44,11 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@tailwindcss/postcss": "^4.1.14",
     "@types/node": "^22.18.6",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
-    "@playwright/test": "^1.56.1",
     "dotenv": "18.0.7",
     "eslint": "^8.57.1",
     "eslint-config-next": "15.5.27",

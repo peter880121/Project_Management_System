@@ -16,6 +16,8 @@ export type HistoryAdapters = Readonly<{
   loadByIds: (projectId: string, ids: string[]) => Promise<HistoricalTask[]>;
   keywordSearch: (projectId: string, query: string) => Promise<HistoricalTask[]>;
   indexFallbacks?: (tasks: HistoricalTask[], projectId: string) => Promise<void>;
+  enqueueFallbacks?: (tasks: HistoricalTask[], projectId: string) => Promise<void>;
+  retrievalTimeoutMs?: number;
 }>;
 
 function getDeliveryDays(createdAt: Date, completedAt: Date): number {
@@ -68,6 +70,19 @@ export const productionHistoryAdapters: HistoryAdapters = {
   vectorSearch: (projectId, embedding) => searchTaskHistory({ projectId, embedding, limit: 8 }),
   loadByIds,
   keywordSearch,
+  async enqueueFallbacks(tasks, projectId) {
+    // Only persist retry work here. Remote embedding and vector writes belong to the explicit retry operation.
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM Project WHERE id = ${projectId} FOR UPDATE`;
+      for (const task of tasks) {
+        const existing = await tx.syncFailure.findFirst({ where: { entityType: "Task", entityId: task.id, target: "MILVUS_TASK_HISTORY" }, select: { id: true } });
+        if (!existing) await tx.syncFailure.create({ data: {
+          projectId, entityType: "Task", entityId: task.id, target: "MILVUS_TASK_HISTORY",
+          payload: { taskId: task.id }, error: "Queued after keyword fallback; awaiting explicit retry",
+        } });
+      }
+    });
+  },
   async indexFallbacks(tasks, projectId) {
     await Promise.all(tasks.map(async (task) => {
       const vectorText = `${task.title}\n${task.description ?? ""}`;
@@ -81,7 +96,7 @@ export const productionHistoryAdapters: HistoryAdapters = {
         await upsertTaskHistoryVector({ taskId: task.id, projectId, embedding });
         await prisma.$transaction((tx) => tx.syncFailure.deleteMany({ where: { entityType: "Task", entityId: task.id, target: "MILVUS_TASK_HISTORY" } }));
       } catch {
-        const message = "Task history embedding or Milvus upsert failed; a later keyword fallback may retry it.";
+        const message = "Task history embedding or Milvus upsert failed; use the explicit history-sync retry operation.";
         await prisma.$transaction(async (tx) => {
           const failure = await tx.syncFailure.findFirst({ where: { entityType: "Task", entityId: task.id, target: "MILVUS_TASK_HISTORY" } });
           if (failure) {
@@ -106,16 +121,35 @@ export async function retrieveHistoricalTasks(projectId: string, query: string, 
   const startedAt = Date.now();
   let degraded = false;
   let tasks: HistoricalTask[] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
   try {
-    const vector = await adapters.embed(query);
-    const hitIds = await adapters.vectorSearch(projectId, vector);
+    const hitIds = await Promise.race([
+      (async () => {
+        const embedding = await adapters.embed(query);
+        return expired ? [] : adapters.vectorSearch(projectId, embedding);
+      })(),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => { expired = true; reject(new Error("History retrieval timeout")); }, adapters.retrievalTimeoutMs ?? 1500); }),
+    ]);
     tasks = await adapters.loadByIds(projectId, hitIds);
     if (tasks.length > 0) return { tasks, hitIds: tasks.map((task) => task.id), degraded: false, durationMs: Date.now() - startedAt };
   } catch {
     degraded = true;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
   degraded = true;
   tasks = await adapters.keywordSearch(projectId, query);
-  if (tasks.length > 0 && adapters.indexFallbacks) await adapters.indexFallbacks(tasks, projectId);
+  if (tasks.length > 0 && adapters.enqueueFallbacks) await adapters.enqueueFallbacks(tasks, projectId);
   return { tasks, hitIds: tasks.map((task) => task.id), degraded, durationMs: Date.now() - startedAt };
+}
+
+export async function retryProjectHistorySync(projectId: string) {
+  const pending = await prisma.syncFailure.findMany({
+    where: { projectId, entityType: "Task", target: "MILVUS_TASK_HISTORY", retryCount: { lt: 5 } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 5, select: { entityId: true },
+  });
+  const tasks = await loadByIds(projectId, [...new Set(pending.map((row) => row.entityId))]);
+  if (tasks.length) await productionHistoryAdapters.indexFallbacks!(tasks, projectId);
+  return { attemptedTaskIds: tasks.map((task) => task.id) };
 }

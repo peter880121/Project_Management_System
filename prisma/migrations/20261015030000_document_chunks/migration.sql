@@ -1,0 +1,31 @@
+ALTER TABLE `Document` ADD COLUMN `chunkedVersion` INTEGER UNSIGNED NULL;
+
+CREATE TABLE `DocumentChunk` (
+  `id` CHAR(36) NOT NULL,
+  `documentId` CHAR(36) NOT NULL,
+  `projectId` CHAR(36) NOT NULL,
+  `parseJobId` CHAR(36) NOT NULL,
+  `version` INTEGER UNSIGNED NOT NULL,
+  `ordinal` INTEGER UNSIGNED NOT NULL,
+  `text` TEXT NOT NULL,
+  `textSha256` CHAR(64) NOT NULL,
+  `page` INTEGER UNSIGNED NULL,
+  `blockIndex` INTEGER UNSIGNED NULL,
+  `startOffset` INTEGER UNSIGNED NOT NULL,
+  `endOffset` INTEGER UNSIGNED NOT NULL,
+  `embeddingModel` VARCHAR(191) NOT NULL,
+  `vectorStatus` ENUM('PENDING', 'SYNCED', 'FAILED') NOT NULL DEFAULT 'PENDING',
+  `attempts` INTEGER UNSIGNED NOT NULL DEFAULT 0,
+  `nextRunAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `leaseToken` CHAR(36) NULL,
+  `leaseUntil` DATETIME(3) NULL,
+  `errorCode` VARCHAR(100) NULL,
+  `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `DocumentChunk_documentId_version_ordinal_key` (`documentId`, `version`, `ordinal`),
+  INDEX `DocumentChunk_projectId_documentId_version_idx` (`projectId`, `documentId`, `version`),
+  INDEX `DocumentChunk_vectorStatus_nextRunAt_leaseUntil_idx` (`vectorStatus`, `nextRunAt`, `leaseUntil`),
+  INDEX `DocumentChunk_parseJobId_idx` (`parseJobId`),
+  CONSTRAINT `DocumentChunk_documentId_fkey` FOREIGN KEY (`documentId`) REFERENCES `Document` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `DocumentChunk_parseJobId_fkey` FOREIGN KEY (`parseJobId`) REFERENCES `DocumentParseJob` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE=InnoDB;

@@ -1,3 +1,4 @@
+import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
@@ -6,6 +7,7 @@ import { getCurrentUser } from "@/modules/auth/session";
 import { requireRole } from "@/modules/auth/rbac";
 import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 import { containsLikelySensitiveInput, generateWbsSuggestions } from "@/modules/ai/wbs/service";
+import { storedDocumentEvidence } from "@/modules/ai/wbs/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +18,7 @@ function getHistoryIds(input: Prisma.JsonValue): string[] {
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ projectId: string }> }) {
+async function GETHandler(_request: Request, context: { params: Promise<{ projectId: string }> }) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["PM"]);
   if (denied) return denied;
@@ -38,6 +40,7 @@ export async function GET(_request: Request, context: { params: Promise<{ projec
     id: suggestion.id,
     output: suggestion.output,
     createdAt: suggestion.createdAt,
+    documentEvidence: storedDocumentEvidence(suggestion.input),
     history: getHistoryIds(suggestion.input).flatMap((id) => {
       const task = historyById.get(id);
       return task?.actualHours && task.completedAt ? [{
@@ -56,7 +59,7 @@ const generateSchema = z.object({
   syntheticDataConfirmed: z.literal(true),
 }).strict();
 
-export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
+async function POSTHandler(request: Request, context: { params: Promise<{ projectId: string }> }) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["PM"]);
   if (denied) return denied;
@@ -71,7 +74,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
   if (containsLikelySensitiveInput(parsed.data.request)) return NextResponse.json({ error: "Potential patient or contact identifiers found. Remove them and use synthetic data only." }, { status: 400 });
   const result = await generateWbsSuggestions({ projectId, actorId: user!.id, request: parsed.data.request, ...getAuditRequestMetadata(request) });
   return NextResponse.json({
-    data: result.suggestions.map((suggestion) => ({ ...suggestion, history: result.historicalTasks })),
+    data: result.suggestions.map((suggestion) => ({ ...suggestion, history: result.historicalTasks, documentEvidence: result.documentEvidence })),
     degraded: result.degraded,
     model: result.model,
     modelDurationMs: result.modelDurationMs,
@@ -79,3 +82,6 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     message: result.manualFallback ? "AI generation failed; create tasks manually." : undefined,
   }, { status: result.manualFallback ? 200 : 201 });
 }
+
+export const GET = projectScoped(GETHandler);
+export const POST = projectScoped(POSTHandler);

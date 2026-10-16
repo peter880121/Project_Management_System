@@ -9,7 +9,7 @@ describe("GET user options", () => {
   it.each(["ADMIN", "PM"])("allows %s and selects exactly the permitted fields", async (role) => {
     getUser.mockResolvedValue({ id: "actor", role });
     findMany.mockResolvedValue([{ id: "member", name: "Synthetic", email: "synthetic@medpm.local" }]);
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/users/options"));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ data: [{ id: "member", name: "Synthetic", email: "synthetic@medpm.local" }] });
     expect(findMany).toHaveBeenCalledWith({
@@ -19,12 +19,12 @@ describe("GET user options", () => {
   });
   it.each([null, "MEMBER", "QA"])("rejects %s before querying", async (role) => {
     getUser.mockResolvedValue(role ? { id: "actor", role } : null);
-    expect((await GET()).status).toBe(role ? 403 : 401);
+    expect((await GET(new Request("http://localhost/api/users/options"))).status).toBe(role ? 403 : 401);
     expect(findMany).not.toHaveBeenCalled();
   });
   it("reports database failure without pretending the list is empty", async () => {
     getUser.mockResolvedValue({ id: "actor", role: "PM" });
     findMany.mockRejectedValue(new Error("database down"));
-    expect((await GET()).status).toBe(500);
+    expect((await GET(new Request("http://localhost/api/users/options"))).status).toBe(500);
   });
 });

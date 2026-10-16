@@ -9,13 +9,17 @@ vi.mock("@/lib/prisma", () => ({
     $transaction: vi.fn(),
   },
 }));
-vi.mock("@/modules/ai/chat-model", () => ({ getConfiguredLlm: () => { throw new Error("LLM is not configured"); } }));
+vi.mock("@/modules/ai/chat-model", () => ({ getConfiguredLlm: vi.fn() }));
 
 import { prisma } from "@/lib/prisma";
 import { runComplianceAudit } from "./service";
+import { getConfiguredLlm } from "@/modules/ai/chat-model";
 
 const tx = {
-  auditLog: { create: vi.fn() },
+  $queryRaw: vi.fn().mockResolvedValue([{ id: "project", role: "ADMIN", status: "ACTIVE", isSystem: false }]),
+  project: { findUnique: vi.fn() },
+  aiSuggestion: { create: vi.fn() },
+  auditLog: { create: vi.fn(), findMany: vi.fn() },
   task: { findMany: vi.fn() },
   requirement: { findMany: vi.fn() },
   testCase: { findMany: vi.fn() },
@@ -28,8 +32,12 @@ const db = prisma as unknown as {
 describe("compliance audit persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getConfiguredLlm).mockImplementation(() => { throw new Error("LLM is not configured"); });
     db.auditLog.findMany.mockResolvedValue([]);
     tx.task.findMany.mockResolvedValue([]);
+    tx.project.findUnique.mockResolvedValue({ id: "project" });
+    tx.aiSuggestion.create.mockResolvedValue({ id: "suggestion" });
+    tx.auditLog.findMany.mockResolvedValue([]);
     tx.requirement.findMany.mockResolvedValue([]);
     tx.testCase.findMany.mockResolvedValue([]);
     tx.auditLog.create.mockResolvedValue({ id: "summary-audit-id" });
@@ -39,10 +47,21 @@ describe("compliance audit persistence", () => {
   it("writes the generated summary and fallback mode as an audit event", async () => {
     const result = await runComplianceAudit({ projectId: "00000000-0000-4000-8000-000000000010", actorId: "00000000-0000-4000-8000-000000000011" });
     expect(result.degraded).toBe(true);
+    expect(tx.aiSuggestion.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "AUDIT_SUMMARY", status: "PENDING" }) });
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
       action: "AI_AUDIT_SUMMARY_GENERATED",
       entityType: "AuditSummary",
       after: expect.objectContaining({ result: "RULE_BASED_FALLBACK", summary: expect.objectContaining({ overview: expect.any(String) }) }),
     }) }));
+  });
+  it("persists fallback when a model never completes within 30 seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(getConfiguredLlm).mockReturnValue({ provider: "openai", modelName: "synthetic-hung-model", model: { invoke: () => new Promise(() => {}) } as unknown as ReturnType<typeof getConfiguredLlm>["model"] });
+      const pending = runComplianceAudit({ projectId: "00000000-0000-4000-8000-000000000010", actorId: "00000000-0000-4000-8000-000000000011" });
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(await pending).toMatchObject({ degraded: true, status: "PENDING" });
+      expect(tx.aiSuggestion.create).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
   });
 });

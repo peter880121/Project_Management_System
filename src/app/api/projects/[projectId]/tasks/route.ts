@@ -1,3 +1,5 @@
+import { businessErrorResponse } from "@/modules/audit/errors";
+import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -14,7 +16,7 @@ const createTaskSchema = z.object({
   requirementId: z.uuid().optional(),
 }).strict();
 
-export async function GET(_request: Request, context: { params: Promise<{ projectId: string }> }) {
+async function GETHandler(_request: Request, context: { params: Promise<{ projectId: string }> }) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["ADMIN", "PM", "MEMBER", "QA"]);
   if (denied) return denied;
@@ -34,7 +36,7 @@ export async function GET(_request: Request, context: { params: Promise<{ projec
   return NextResponse.json({ data });
 }
 
-export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
+async function POSTHandler(request: Request, context: { params: Promise<{ projectId: string }> }) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["ADMIN", "PM"]);
   if (denied) return denied;
@@ -47,9 +49,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
   try {
     const task = await createTask({ projectId, ...parsed.data, actorId: user!.id, ...getAuditRequestMetadata(request) });
     return NextResponse.json({ data: task }, { status: 201 });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create task";
-    if (message === "Project not found" || message.startsWith("Requirement not found")) return NextResponse.json({ error: message }, { status: 404 });
-    throw error;
-  }
+  } catch (error) { return businessErrorResponse(error); }
 }
+
+export const GET = projectScoped(GETHandler);
+export const POST = projectScoped(POSTHandler);

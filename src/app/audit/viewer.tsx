@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { CompliancePanel, SummaryHistory, type SavedSummary } from "./compliance-panel";
 
 type AuditRow = {
   id: string;
@@ -16,23 +17,13 @@ type AuditRow = {
   actor?: { id: string; name: string; role: string };
 };
 
-type SummaryResult = {
-  summaryId: string;
-  degraded: boolean;
-  summary: {
-    overview: string;
-    keyChanges: { summary: string; auditIds: string[] }[];
-    anomalies: { summary: string; auditIds: string[]; recordIds: string[] }[];
-    reviewItems: { summary: string; auditIds: string[]; recordIds: string[] }[];
-  };
-  auditLogs: AuditRow[];
-};
+type SummaryResult = SavedSummary & { auditLogs: AuditRow[] };
 
 function asIsoDate(value: string): string | undefined {
   return value ? new Date(value).toISOString() : undefined;
 }
 
-export default function AuditLogViewer() {
+export default function AuditLogViewer({ canReview = false }: { canReview?: boolean }) {
   const [projectId, setProjectId] = useState("");
   const [actorId, setActorId] = useState("");
   const [action, setAction] = useState("");
@@ -43,11 +34,6 @@ export default function AuditLogViewer() {
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<SummaryResult | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
-  const summaryItems = summary ? [
-    ...summary.summary.keyChanges.map((item) => ({ ...item, heading: "关键变更", recordIds: [] as string[] })),
-    ...summary.summary.anomalies.map((item) => ({ ...item, heading: "异常" })),
-    ...summary.summary.reviewItems.map((item) => ({ ...item, heading: "待复查" })),
-  ] : [];
 
   async function scan() {
     if (!projectId.trim()) { setMessage("生成合规摘要前请填写项目 ID。"); return; }
@@ -141,14 +127,8 @@ export default function AuditLogViewer() {
         </div>
       </form>
 
-      {summary && <section className="my-6 rounded-xl border border-teal-200 bg-teal-50 p-5" aria-label="合规审计摘要">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold">合规审计摘要</h2><span className="text-xs text-slate-600">摘要审计 ID：{summary.summaryId}{summary.degraded ? " · 规则降级" : ""}</span></div>
-        <p className="mt-3 text-sm">{summary.summary.overview}</p>
-        {summaryItems.map((item, index) => <article key={`${item.heading}-${index}`} className="mt-3 rounded-lg bg-white p-3 text-sm">
-          <strong>{item.heading}</strong><p className="mt-1">{item.summary}</p>
-          <div className="mt-2 flex flex-wrap gap-3 text-xs">{item.auditIds.map((id) => <a key={id} className="font-medium text-teal-800 underline" href={`#audit-${id}`}>审计记录 {id}</a>)}{item.recordIds.map((id) => <span key={id} className="text-slate-600">业务记录 {id}</span>)}</div>
-        </article>)}
-      </section>}
+      <SummaryHistory projectId={projectId} canReview={canReview} />
+      {summary && <CompliancePanel key={summary.summaryId} initial={summary} canReview={canReview} />}
       <p role="status" aria-live="polite" className="my-4 text-sm text-slate-600">{message}</p>
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="min-w-full divide-y divide-slate-200 text-left text-sm">

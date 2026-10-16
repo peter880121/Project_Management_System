@@ -1,5 +1,6 @@
 import { DataType } from "@zilliz/milvus2-sdk-node";
 import { getMilvusClient } from "./client";
+import { z } from "zod";
 
 export const TASK_HISTORY_COLLECTION = "task_history";
 export const TASK_HISTORY_EMBEDDING_DIMENSION = 1536;
@@ -35,19 +36,21 @@ async function ensureTaskHistoryCollection() {
 }
 
 export async function upsertTaskHistoryVector(input: { taskId: string; projectId: string; embedding: number[] }) {
-  if (input.embedding.length !== TASK_HISTORY_EMBEDDING_DIMENSION) throw new Error("Task history embedding must have 1536 dimensions");
+  z.uuid().parse(input.taskId); z.uuid().parse(input.projectId);
+  if (input.embedding.length !== TASK_HISTORY_EMBEDDING_DIMENSION || input.embedding.some((value) => !Number.isFinite(value))) throw new Error("Task history embedding must have 1536 finite dimensions");
   const client = await ensureTaskHistoryCollection();
-  await client.upsert({ collection_name: TASK_HISTORY_COLLECTION, data: [{
+  const response = await client.upsert({ collection_name: TASK_HISTORY_COLLECTION, data: [{
     taskId: input.taskId,
     projectId: input.projectId,
     embedding: input.embedding,
     indexedAt: Date.now(),
   }] });
+  if (response.status.error_code !== "Success") throw new Error("Task history vector write failed");
 }
 
 /** Project IDs come from validated UUIDs; filtering stays inside the adapter. */
 export async function searchTaskHistory(input: { projectId: string; embedding: number[]; limit?: number }): Promise<string[]> {
-  if (input.embedding.length !== TASK_HISTORY_EMBEDDING_DIMENSION) throw new Error("Task history embedding must have 1536 dimensions");
+  if (input.embedding.length !== TASK_HISTORY_EMBEDDING_DIMENSION || input.embedding.some((value) => !Number.isFinite(value))) throw new Error("Task history embedding must have 1536 finite dimensions");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.projectId)) throw new Error("Invalid project ID");
   const client = await ensureTaskHistoryCollection();
   const response = await client.search({
@@ -60,6 +63,7 @@ export async function searchTaskHistory(input: { projectId: string; embedding: n
     metric_type: "COSINE",
     params: { ef: 64 },
   });
-  const hits = response.results[0] ?? [];
-  return hits.flatMap((hit: { taskId?: unknown }) => typeof hit.taskId === "string" ? [hit.taskId] : []);
+  if (response.status.error_code !== "Success") throw new Error("Task history vector search failed");
+  const hits = response.results.flat();
+  return hits.flatMap((hit) => typeof hit.taskId === "string" ? [hit.taskId] : []);
 }

@@ -8,6 +8,7 @@ export const wbsTaskSchema = z.object({
     if (new Set(dependencies).size !== dependencies.length) context.addIssue({ code: "custom", message: "A prerequisite may only be listed once" });
   }),
   suggestedRole: z.enum(["PM", "MEMBER", "QA", "ADMIN"]),
+  sourceChunkIds: z.array(z.uuid()).max(4).default([]),
 }).strict();
 
 export const wbsResponseSchema = z.object({ tasks: z.array(wbsTaskSchema).min(1).max(30) }).strict().superRefine(({ tasks }, context) => {
@@ -44,3 +45,11 @@ export type HistoricalTask = Readonly<{
   actualHours: number;
   deliveryDays: number;
 }>;
+
+export const wbsDocumentEvidenceSchema = z.object({ id: z.uuid(), documentId: z.uuid(), version: z.number().int().positive(), page: z.number().int().positive().nullable(), text: z.string().max(2000), textSha256: z.string().length(64), filename: z.string().max(512) });
+export type WbsDocumentEvidence = z.infer<typeof wbsDocumentEvidenceSchema>;
+export function storedDocumentEvidence(input: unknown): WbsDocumentEvidence[] {
+  if (!input || typeof input !== "object" || !("documentEvidence" in input)) return [];
+  const parsed = z.array(wbsDocumentEvidenceSchema).max(4).safeParse(input.documentEvidence);
+  return parsed.success ? parsed.data : [];
+}

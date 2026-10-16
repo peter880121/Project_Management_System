@@ -68,25 +68,35 @@ enum AiSuggestionType {
 }
 
 model User {
-  id                      String               @id @default(uuid()) @db.Char(36)
-  email                   String               @unique @db.VarChar(191)
-  name                    String               @db.VarChar(191)
-  role                    Role                 @default(MEMBER)
-  passwordHash            String?              @db.VarChar(255)
-  isSystem                Boolean              @default(false)
-  status                  UserStatus           @default(PENDING)
-  lastLoginAt             DateTime?            @db.DateTime(3)
-  failedLoginCount        Int                  @default(0)
-  lockedUntil             DateTime?            @db.DateTime(3)
-  createdAt               DateTime             @default(now()) @db.DateTime(3)
-  updatedAt               DateTime             @updatedAt @db.DateTime(3)
-  ownedProjects           Project[]            @relation("ProjectOwner")
+  id                      String                    @id @default(uuid()) @db.Char(36)
+  email                   String                    @unique @db.VarChar(191)
+  name                    String                    @db.VarChar(191)
+  role                    Role                      @default(MEMBER)
+  passwordHash            String?                   @db.VarChar(255)
+  isSystem                Boolean                   @default(false)
+  status                  UserStatus                @default(PENDING)
+  lastLoginAt             DateTime?                 @db.DateTime(3)
+  failedLoginCount        Int                       @default(0)
+  lockedUntil             DateTime?                 @db.DateTime(3)
+  createdAt               DateTime                  @default(now()) @db.DateTime(3)
+  updatedAt               DateTime                  @updatedAt @db.DateTime(3)
+  ownedProjects           Project[]                 @relation("ProjectOwner")
+  uploadedDocuments       Document[]                @relation("DocumentUploader")
+  documentParseJobs       DocumentParseJob[]        @relation("DocumentParseRequester")
   tasks                   Task[]
-  reviewedRecommendations AIRecommendation[]   @relation("RecommendationReviewer")
-  reviewedSuggestions     AiSuggestion[]       @relation("SuggestionReviewer")
+  weeklyCapacities         MemberWeeklyCapacity[]
+  riskSchedules           RiskScanSchedule[]
+  riskNotifications       RiskNotification[]
+  projectMemberships      ProjectMember[]
+  complianceExports       ComplianceExport[]
+  reviewedRecommendations AIRecommendation[]        @relation("RecommendationReviewer")
+  reviewedSuggestions     AiSuggestion[]            @relation("SuggestionReviewer")
   auditLogs               AuditLog[]
   sessions                Session[]
   passwordResetTokens     PasswordResetToken[]
+  requirementTaskReviews  Task[]                    @relation("TaskRequirementReviewer")
+  requirementTestReviews  TestCase[]                @relation("TestRequirementReviewer")
+  complianceReviews       ComplianceFindingReview[]
 
   @@index([isSystem])
 }
@@ -134,34 +144,98 @@ model Project {
   suggestions     AiSuggestion[]
   syncFailures    SyncFailure[]
   auditLogs       AuditLog[]
+  riskSchedule    RiskScanSchedule?
+  riskScanJobs    RiskScanJob[]
+  members         ProjectMember[]
+  complianceExports ComplianceExport[]
 
   @@index([ownerId, status])
 }
 
+model ProjectMember {
+  id        String   @id @default(uuid()) @db.Char(36)
+  projectId String   @db.Char(36)
+  userId    String   @db.Char(36)
+  active    Boolean  @default(true)
+  version   Int      @default(1) @db.UnsignedInt
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@unique([projectId, userId])
+  @@index([userId, active, projectId])
+}
+
+enum ComplianceExportStatus {
+  GENERATING
+  AVAILABLE
+  FAILED
+}
+
+model ComplianceExport {
+  id          String                 @id @default(uuid()) @db.Char(36)
+  projectId   String                 @db.Char(36)
+  actorId     String                 @db.Char(36)
+  requestKey  String                 @db.Char(36)
+  format      String                 @db.VarChar(16)
+  status      ComplianceExportStatus @default(GENERATING)
+  scope       Json
+  minioKey    String                 @db.VarChar(512)
+  sha256      String                 @db.Char(64)
+  fileSize    Int                    @db.UnsignedInt
+  errorCode   String?                @db.VarChar(100)
+  createdAt   DateTime               @default(now()) @db.DateTime(3)
+  updatedAt   DateTime               @updatedAt @db.DateTime(3)
+  project     Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  actor       User                   @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  @@unique([projectId, requestKey])
+  @@index([projectId, createdAt])
+}
+
 model Task {
-  id            String           @id @default(uuid()) @db.Char(36)
-  projectId     String           @db.Char(36)
-  assigneeId    String?          @db.Char(36)
-  title         String           @db.VarChar(191)
-  description   String?          @db.Text
-  status        TaskStatus       @default(TODO)
-  estimateHours Decimal?         @db.Decimal(8, 2)
-  actualHours   Decimal?         @db.Decimal(8, 2)
-  completedAt   DateTime?        @db.DateTime(3)
-  dueDate       DateTime?        @db.DateTime(3)
-  createdAt     DateTime         @default(now()) @db.DateTime(3)
-  updatedAt     DateTime         @updatedAt @db.DateTime(3)
-  project       Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  assignee      User?            @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
-  requirementId String?          @db.Char(36)
-  requirement   Requirement?     @relation(fields: [requirementId], references: [id], onDelete: SetNull)
-  dependencies  TaskDependency[] @relation("TaskDependencies")
-  blockedBy     TaskDependency[] @relation("TaskPrerequisites")
+  id                         String           @id @default(uuid()) @db.Char(36)
+  projectId                  String           @db.Char(36)
+  assigneeId                 String?          @db.Char(36)
+  title                      String           @db.VarChar(191)
+  description                String?          @db.Text
+  status                     TaskStatus       @default(TODO)
+  estimateHours              Decimal?         @db.Decimal(8, 2)
+  actualHours                Decimal?         @db.Decimal(8, 2)
+  completedAt                DateTime?        @db.DateTime(3)
+  dueDate                    DateTime?        @db.DateTime(3)
+  plannedStartDate           DateTime?        @db.DateTime(3)
+  scheduleVersion            Int              @default(0) @db.UnsignedInt
+  createdAt                  DateTime         @default(now()) @db.DateTime(3)
+  updatedAt                  DateTime         @updatedAt @db.DateTime(3)
+  project                    Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assignee                   User?            @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+  requirementId              String?          @db.Char(36)
+  requirement                Requirement?     @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  reviewedRequirementVersion Int?             @db.UnsignedInt
+  requirementReviewedById    String?          @db.Char(36)
+  requirementReviewedAt      DateTime?        @db.DateTime(3)
+  requirementReviewer        User?            @relation("TaskRequirementReviewer", fields: [requirementReviewedById], references: [id], onDelete: Restrict)
+  dependencies               TaskDependency[] @relation("TaskDependencies")
+  blockedBy                  TaskDependency[] @relation("TaskPrerequisites")
 
   @@index([projectId, status])
   @@index([assigneeId, status])
   @@index([dueDate, status])
   @@index([requirementId, status])
+}
+
+model MemberWeeklyCapacity {
+  id        String   @id @default(uuid()) @db.Char(36)
+  userId    String   @db.Char(36)
+  weekStart DateTime @db.DateTime(3)
+  hours     Decimal? @db.Decimal(6, 2)
+  version   Int      @default(1) @db.UnsignedInt
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, weekStart])
+  @@index([weekStart])
 }
 
 model TaskDependency {
@@ -194,13 +268,17 @@ model Requirement {
 }
 
 model TestCase {
-  id            String         @id @default(uuid()) @db.Char(36)
-  requirementId String         @db.Char(36)
-  title         String         @db.VarChar(191)
-  status        TestCaseStatus @default(NOT_RUN)
-  createdAt     DateTime       @default(now()) @db.DateTime(3)
-  updatedAt     DateTime       @updatedAt @db.DateTime(3)
-  requirement   Requirement    @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  id                         String         @id @default(uuid()) @db.Char(36)
+  requirementId              String         @db.Char(36)
+  title                      String         @db.VarChar(191)
+  status                     TestCaseStatus @default(NOT_RUN)
+  createdAt                  DateTime       @default(now()) @db.DateTime(3)
+  updatedAt                  DateTime       @updatedAt @db.DateTime(3)
+  requirement                Requirement    @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  reviewedRequirementVersion Int?           @db.UnsignedInt
+  requirementReviewedById    String?        @db.Char(36)
+  requirementReviewedAt      DateTime?      @db.DateTime(3)
+  requirementReviewer        User?          @relation("TestRequirementReviewer", fields: [requirementReviewedById], references: [id], onDelete: Restrict)
 
   @@index([requirementId, status])
 }
@@ -222,19 +300,102 @@ model AIRecommendation {
 }
 
 model AiSuggestion {
-  id           String             @id @default(uuid()) @db.Char(36)
-  projectId    String             @db.Char(36)
-  type         AiSuggestionType
-  input        Json
-  output       Json
-  status       AiSuggestionStatus @default(PENDING)
-  reviewedById String?            @db.Char(36)
-  reviewedAt   DateTime?          @db.DateTime(3)
-  createdAt    DateTime           @default(now()) @db.DateTime(3)
-  project      Project            @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  reviewedBy   User?              @relation("SuggestionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  id             String                    @id @default(uuid()) @db.Char(36)
+  projectId      String                    @db.Char(36)
+  type           AiSuggestionType
+  input          Json
+  output         Json
+  status         AiSuggestionStatus        @default(PENDING)
+  reviewedById   String?                   @db.Char(36)
+  reviewedAt     DateTime?                 @db.DateTime(3)
+  createdAt      DateTime                  @default(now()) @db.DateTime(3)
+  project        Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  reviewedBy     User?                     @relation("SuggestionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  findingReviews ComplianceFindingReview[]
+  riskNotifications RiskNotification[]
 
   @@index([projectId, status, createdAt])
+}
+
+model RiskScanSchedule {
+  id             String   @id @default(uuid()) @db.Char(36)
+  projectId      String   @unique @db.Char(36)
+  configuredById String   @db.Char(36)
+  enabled        Boolean  @default(false)
+  intervalMinutes Int     @default(60) @db.UnsignedInt
+  version        Int      @default(1) @db.UnsignedInt
+  nextRunAt      DateTime @db.DateTime(3)
+  createdAt      DateTime @default(now()) @db.DateTime(3)
+  updatedAt      DateTime @updatedAt @db.DateTime(3)
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  configuredBy   User     @relation(fields: [configuredById], references: [id], onDelete: Restrict)
+  jobs           RiskScanJob[]
+  @@index([enabled, nextRunAt])
+}
+
+enum RiskScanJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+model RiskScanJob {
+  id              String            @id @default(uuid()) @db.Char(36)
+  scheduleId      String            @db.Char(36)
+  scheduleVersion Int               @db.UnsignedInt
+  projectId       String            @db.Char(36)
+  dueAt           DateTime          @db.DateTime(3)
+  nextRunAt       DateTime          @db.DateTime(3)
+  status          RiskScanJobStatus @default(QUEUED)
+  attempts        Int               @default(0) @db.UnsignedInt
+  leaseToken      String?           @db.Char(36)
+  leaseUntil      DateTime?         @db.DateTime(3)
+  errorCode       String?           @db.VarChar(100)
+  batchId         String?           @db.Char(36)
+  suggestionCount Int?              @db.UnsignedInt
+  completedAt     DateTime?         @db.DateTime(3)
+  createdAt       DateTime          @default(now()) @db.DateTime(3)
+  updatedAt       DateTime          @updatedAt @db.DateTime(3)
+  schedule        RiskScanSchedule  @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  project         Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  @@unique([scheduleId, dueAt])
+  @@index([status, nextRunAt, leaseUntil])
+  @@index([projectId, createdAt])
+}
+
+model RiskNotification {
+  id           String       @id @default(uuid()) @db.Char(36)
+  userId       String       @db.Char(36)
+  suggestionId String       @db.Char(36)
+  readAt       DateTime?    @db.DateTime(3)
+  createdAt    DateTime     @default(now()) @db.DateTime(3)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  suggestion   AiSuggestion @relation(fields: [suggestionId], references: [id], onDelete: Restrict)
+  @@unique([userId, suggestionId])
+  @@index([userId, readAt, createdAt])
+  @@index([suggestionId])
+}
+
+model ComplianceFindingReview {
+  id           String                    @id @default(uuid()) @db.Char(36)
+  suggestionId String                    @db.Char(36)
+  findingKey   String                    @db.VarChar(191)
+  decision     ComplianceFindingDecision
+  note         String                    @db.VarChar(2000)
+  reviewedById String                    @db.Char(36)
+  createdAt    DateTime                  @default(now()) @db.DateTime(3)
+  suggestion   AiSuggestion              @relation(fields: [suggestionId], references: [id], onDelete: Restrict)
+  reviewer     User                      @relation(fields: [reviewedById], references: [id], onDelete: Restrict)
+
+  @@unique([suggestionId, findingKey])
+  @@index([reviewedById, createdAt])
+}
+
+enum ComplianceFindingDecision {
+  CONFIRMED
+  DISMISSED
 }
 
 model AuditLog {
@@ -259,16 +420,124 @@ model AuditLog {
 }
 
 model Document {
-  id         String   @id @default(uuid()) @db.Char(36)
-  projectId  String   @db.Char(36)
-  filename   String   @db.VarChar(512)
-  minioKey   String   @db.VarChar(512)
-  mediaType  String   @db.VarChar(191)
-  parsedText String?  @db.LongText
-  createdAt  DateTime @default(now()) @db.DateTime(3)
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  id            String                @id @default(uuid()) @db.Char(36)
+  projectId     String                @db.Char(36)
+  filename      String                @db.VarChar(512)
+  minioKey      String                @db.VarChar(512)
+  mediaType     String                @db.VarChar(191)
+  parsedText    String?               @db.LongText
+  parseStatus   DocumentParseStatus   @default(NOT_REQUESTED)
+  parseVersion  Int                   @default(0) @db.UnsignedInt
+  parsedVersion Int?                  @db.UnsignedInt
+  parsedAt      DateTime?             @db.DateTime(3)
+  chunkedVersion Int?                @db.UnsignedInt
+  chunks        DocumentChunk[]
+  parseJobs     DocumentParseJob[]
+  uploadedById  String?               @db.Char(36)
+  uploadedBy    User?                 @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  fileSize      Int?                  @db.UnsignedInt
+  sha256        String?               @db.Char(64)
+  uploadKey     String?               @db.Char(36)
+  storageStatus DocumentStorageStatus @default(LEGACY)
+  errorCode     String?               @db.VarChar(100)
+  uploadedAt    DateTime?             @db.DateTime(3)
+  updatedAt     DateTime              @default(now()) @updatedAt @db.DateTime(3)
+  createdAt     DateTime              @default(now()) @db.DateTime(3)
+  project       Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
+  @@unique([projectId, uploadKey])
   @@index([projectId, createdAt])
+}
+
+enum DocumentParseStatus {
+  NOT_REQUESTED
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model DocumentParseJob {
+  id             String              @id @default(uuid()) @db.Char(36)
+  documentId     String              @db.Char(36)
+  version        Int                 @db.UnsignedInt
+  requestedById  String              @db.Char(36)
+  requestKey     String              @db.Char(36)
+  status         DocumentParseStatus @default(QUEUED)
+  phase          String              @default("RESERVE") @db.VarChar(32)
+  provider       String              @default("mineru-cloud-v4") @db.VarChar(64)
+  modelVersion   String              @db.VarChar(64)
+  sourceSha256   String              @db.Char(64)
+  sourceFilename String              @db.VarChar(512)
+  sourceSize     Int                 @db.UnsignedInt
+  remoteBatchId  String?             @db.VarChar(191)
+  uploadUrl      String?             @db.Text
+  attempts       Int                 @default(0) @db.UnsignedInt
+  errorCode      String?             @db.VarChar(100)
+  nextRunAt      DateTime            @default(now()) @db.DateTime(3)
+  deadlineAt     DateTime            @db.DateTime(3)
+  leaseToken     String?             @db.Char(36)
+  leaseUntil     DateTime?           @db.DateTime(3)
+  resultKey      String?             @db.VarChar(512)
+  resultSha256   String?             @db.Char(64)
+  markdown       String?             @db.LongText
+  blocks         Json?
+  ip             String?             @db.VarChar(45)
+  userAgent      String?             @db.VarChar(512)
+  createdAt      DateTime            @default(now()) @db.DateTime(3)
+  updatedAt      DateTime            @default(now()) @updatedAt @db.DateTime(3)
+  completedAt    DateTime?           @db.DateTime(3)
+  document       Document            @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  requestedBy    User                @relation("DocumentParseRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  chunks         DocumentChunk[]
+
+  @@unique([documentId, version])
+  @@unique([documentId, requestKey])
+  @@index([status, nextRunAt, leaseUntil])
+  @@index([requestedById])
+}
+
+enum DocumentVectorStatus {
+  PENDING
+  SYNCED
+  FAILED
+}
+
+model DocumentChunk {
+  id             String               @id @default(uuid()) @db.Char(36)
+  documentId     String               @db.Char(36)
+  projectId      String               @db.Char(36)
+  parseJobId     String               @db.Char(36)
+  version        Int                  @db.UnsignedInt
+  ordinal        Int                  @db.UnsignedInt
+  text           String               @db.Text
+  textSha256     String               @db.Char(64)
+  page           Int?                 @db.UnsignedInt
+  blockIndex     Int?                 @db.UnsignedInt
+  startOffset    Int                  @db.UnsignedInt
+  endOffset      Int                  @db.UnsignedInt
+  embeddingModel String               @db.VarChar(191)
+  vectorStatus   DocumentVectorStatus @default(PENDING)
+  attempts       Int                  @default(0) @db.UnsignedInt
+  nextRunAt      DateTime             @default(now()) @db.DateTime(3)
+  leaseToken     String?              @db.Char(36)
+  leaseUntil     DateTime?            @db.DateTime(3)
+  errorCode      String?              @db.VarChar(100)
+  createdAt      DateTime             @default(now()) @db.DateTime(3)
+  document       Document             @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  parseJob       DocumentParseJob     @relation(fields: [parseJobId], references: [id], onDelete: Restrict)
+
+  @@unique([documentId, version, ordinal])
+  @@index([projectId, documentId, version])
+  @@index([vectorStatus, nextRunAt, leaseUntil])
+  @@index([parseJobId])
+}
+
+enum DocumentStorageStatus {
+  LEGACY
+  UPLOADING
+  AVAILABLE
+  FAILED
 }
 
 model SyncFailure {

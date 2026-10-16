@@ -1,3 +1,5 @@
+import { businessErrorResponse } from "@/modules/audit/errors";
+import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/modules/auth/session";
@@ -9,7 +11,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const decisionSchema = z.object({ decision: z.enum(["HANDLED", "IGNORED"]) }).strict();
 
-export async function PATCH(request: Request, context: { params: Promise<{ suggestionId: string }> }) {
+async function PATCHHandler(request: Request, context: { params: Promise<{ suggestionId: string }> }) {
   const user = await getCurrentUser();
   const denied = requireRole(user, ["PM"]);
   if (denied) return denied;
@@ -22,9 +24,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ sugge
   try {
     const data = await reviewRiskSuggestion({ suggestionId, decision: parsed.data.decision, actorId: user!.id, ...getAuditRequestMetadata(request) });
     return NextResponse.json({ data });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to review risk suggestion";
-    const status = message === "AI suggestion not found" ? 404 : message === "Suggestion is not a risk warning" ? 400 : 409;
-    return NextResponse.json({ error: message }, { status });
-  }
+  } catch (error) { return businessErrorResponse(error); }
 }
+
+export const PATCH = projectScoped(PATCHHandler);

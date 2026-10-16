@@ -3,8 +3,59 @@ import type { Prisma, TaskStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { canTransitionTaskStatus } from "@/modules/tasks/status";
+import { assertProjectAccessTx, participant, ProjectAccessError, lockBusinessActor } from "@/modules/auth/project-access";
+import { BusinessError } from "./errors";
+
+async function taskProjectId(id: string) {
+  const row = await prisma.task.findUnique({ where: { id }, select: { projectId: true } });
+  if (!row) throw new BusinessError("Task not found", 404);
+  return row.projectId;
+}
+async function suggestionProjectId(id: string) {
+  const row = await prisma.aiSuggestion.findUnique({ where: { id }, select: { projectId: true } });
+  if (!row) throw new BusinessError("AI suggestion not found", 404);
+  return row.projectId;
+}
 
 export type AuditAction =
+  | "PROJECT_MEMBER_UPDATED"
+  | "COMPLIANCE_EXPORT_PREPARED"
+  | "COMPLIANCE_EXPORT_FAILED"
+  | "COMPLIANCE_EXPORT_CLEANED"
+  | "RISK_SCHEDULE_UPDATED"
+  | "RISK_JOB_QUEUED"
+  | "RISK_JOB_STARTED"
+  | "RISK_JOB_COMPLETED"
+  | "RISK_JOB_FAILED"
+  | "RISK_JOB_SKIPPED"
+  | "RISK_JOB_RETRIED"
+  | "RISK_NOTIFICATIONS_CREATED"
+  | "RISK_NOTIFICATION_READ"
+  | "TASK_SCHEDULE_UPDATED"
+  | "MEMBER_CAPACITY_UPDATED"
+  | "DOCUMENT_CHUNKED"
+  | "DOCUMENT_CHUNK_FAILED"
+  | "DOCUMENT_VECTOR_SYNCED"
+  | "DOCUMENT_VECTOR_FAILED"
+  | "DOCUMENT_PARSE_REQUESTED"
+  | "DOCUMENT_PARSE_STARTED"
+  | "DOCUMENT_PARSE_SUCCEEDED"
+  | "DOCUMENT_PARSE_FAILED"
+  | "DOCUMENT_PARSE_ARTIFACT_CLEANED"
+  | "DOCUMENT_UPLOAD_STARTED"
+  | "DOCUMENT_UPLOADED"
+  | "DOCUMENT_UPLOAD_FAILED"
+  | "DOCUMENT_UPLOAD_RECOVERED"
+  | "DOCUMENT_CLEANUP_RETRIED"
+  | "REQUIREMENT_VERSION_REVIEWED"
+  | "COMPLIANCE_FINDING_REVIEWED"
+  | "PROJECT_CREATED"
+  | "REQUIREMENT_CREATED"
+  | "REQUIREMENT_UPDATED"
+  | "TEST_CASE_CREATED"
+  | "TEST_CASE_UPDATED"
+  | "TASK_REQUIREMENT_CHANGED"
+  | "VECTOR_SYNC_RETRIED"
   | "TASK_CREATED"
   | "TASK_STATUS_CHANGED"
   | "TASK_ASSIGNED"
@@ -31,6 +82,7 @@ const acceptedWbsPayloadSchema = z.object({
   suggestedRole: z.enum(["PM", "MEMBER", "QA", "ADMIN"]),
   dependencyIds: z.array(z.uuid()).max(30),
   dependencyTitles: z.array(z.string()).max(30),
+  sourceChunkIds: z.array(z.uuid()).max(4).optional(),
   taskId: z.uuid().optional(),
 }).strict();
 
@@ -42,11 +94,12 @@ export async function createTask(input: {
   actorId: string;
 } & AuditRequestMetadata) {
   return prisma.$transaction(async (tx) => {
+    await lockBusinessActor(tx, input.actorId, ["ADMIN", "PM"], input.projectId);
     const project = await tx.project.findUnique({ where: { id: input.projectId }, select: { id: true } });
-    if (!project) throw new Error("Project not found");
+    if (!project) throw new BusinessError("Project not found", 404);
     if (input.requirementId) {
       const requirement = await tx.requirement.findFirst({ where: { id: input.requirementId, projectId: input.projectId }, select: { id: true } });
-      if (!requirement) throw new Error("Requirement not found in this project");
+      if (!requirement) throw new BusinessError("Requirement not found in this project", 404);
     }
     const task = await tx.task.create({ data: {
       projectId: input.projectId,
@@ -85,6 +138,7 @@ export type AuditEvent = Readonly<{
 
 /** Audit writes require a transaction client so callers can commit them atomically with business changes. */
 export async function recordAudit(tx: Prisma.TransactionClient, event: AuditEvent) {
+  if (event.projectId) await assertProjectAccessTx(tx, event.actorId, event.projectId);
   return tx.auditLog.create({
     data: {
       actorId: event.actorId,
@@ -106,20 +160,23 @@ export async function changeTaskStatus(input: {
   actualHours?: number;
   actorId: string;
 } & AuditRequestMetadata) {
+  const projectId = await taskProjectId(input.taskId);
   return prisma.$transaction(async (tx) => {
+    const actor = await lockBusinessActor(tx, input.actorId, ["ADMIN", "PM", "MEMBER"], projectId);
     const task = await tx.task.findUnique({ where: { id: input.taskId } });
-    if (!task) throw new Error("Task not found");
-    if (input.status === "DONE" && (!input.actualHours || input.actualHours <= 0 || !Number.isFinite(input.actualHours))) throw new Error("Actual hours are required to complete a task");
-    if (task.status === input.status) throw new Error("Task status is unchanged");
-    if (!canTransitionTaskStatus(task.status, input.status)) throw new Error(`Invalid task status transition: ${task.status} -> ${input.status}`);
+    if (!task) throw new BusinessError("Task not found", 404);
+    if (actor.role === "MEMBER" && (task.assigneeId !== input.actorId || task.status === "DONE")) throw new ProjectAccessError("成员仅可更新本人负责且未完成的任务");
+    if (input.status === "DONE" && (!input.actualHours || input.actualHours <= 0 || !Number.isFinite(input.actualHours))) throw new BusinessError("Actual hours are required to complete a task");
+    if (task.status === input.status) throw new BusinessError("Task status is unchanged");
+    if (!canTransitionTaskStatus(task.status, input.status)) throw new BusinessError(`Invalid task status transition: ${task.status} -> ${input.status}`);
     const changed = await tx.task.updateMany({
-      where: { id: task.id, status: task.status },
+      where: { id: task.id, status: task.status, ...(actor.role === "MEMBER" ? { assigneeId: input.actorId } : {}) },
       data: {
         status: input.status,
         ...(input.status === "DONE" ? { actualHours: input.actualHours, completedAt: new Date() } : {}),
       },
     });
-    if (changed.count !== 1) throw new Error("Task changed concurrently; retry the operation");
+    if (changed.count !== 1) throw new BusinessError("Task changed concurrently; retry the operation");
     const updated = await tx.task.findUniqueOrThrow({ where: { id: task.id } });
     await recordAudit(tx, {
       actorId: input.actorId,
@@ -140,26 +197,28 @@ export async function acceptWbsSuggestion(input: {
   suggestionId: string;
   actorId: string;
 } & AuditRequestMetadata) {
+  const projectId = await suggestionProjectId(input.suggestionId);
   return prisma.$transaction(async (tx) => {
+    await lockBusinessActor(tx, input.actorId, ["PM"], projectId);
     const suggestion = await tx.aiSuggestion.findUnique({ where: { id: input.suggestionId } });
-    if (!suggestion) throw new Error("AI suggestion not found");
-    if (suggestion.type !== "WBS") throw new Error("Suggestion is not a WBS task");
-    if (suggestion.status !== "PENDING") throw new Error("AI suggestion has already been reviewed");
+    if (!suggestion) throw new BusinessError("AI suggestion not found", 404);
+    if (suggestion.type !== "WBS") throw new BusinessError("Suggestion is not a WBS task", 400);
+    if (suggestion.status !== "PENDING") throw new BusinessError("AI suggestion has already been reviewed");
 
     const parsedOutput = acceptedWbsPayloadSchema.safeParse(suggestion.output);
-    if (!parsedOutput.success) throw new Error("WBS suggestion has an invalid task payload");
+    if (!parsedOutput.success) throw new BusinessError("WBS suggestion has an invalid task payload");
     const output = parsedOutput.data;
     const dependencySuggestions = output.dependencyIds.length === 0 ? [] : await tx.aiSuggestion.findMany({
       where: { id: { in: output.dependencyIds }, projectId: suggestion.projectId, type: "WBS", status: "ACCEPTED" },
     });
     if (dependencySuggestions.length !== output.dependencyIds.length) {
-      throw new Error("Accept or remove prerequisite suggestions before accepting this task");
+      throw new BusinessError("Accept or remove prerequisite suggestions before accepting this task");
     }
     const dependencyTaskIds = dependencySuggestions.flatMap((dependency) => {
       const dependencyOutput = acceptedWbsPayloadSchema.safeParse(dependency.output);
       return dependencyOutput.success && dependencyOutput.data.taskId ? [dependencyOutput.data.taskId] : [];
     });
-    if (dependencyTaskIds.length !== output.dependencyIds.length) throw new Error("An accepted prerequisite is missing its task record");
+    if (dependencyTaskIds.length !== output.dependencyIds.length) throw new BusinessError("An accepted prerequisite is missing its task record");
 
     const task = await tx.task.create({ data: {
       projectId: suggestion.projectId,
@@ -175,7 +234,7 @@ export async function acceptWbsSuggestion(input: {
       where: { id: suggestion.id, status: "PENDING" },
       data: { status: "ACCEPTED", reviewedById: input.actorId, reviewedAt },
     });
-    if (changed.count !== 1) throw new Error("AI suggestion was reviewed concurrently; refresh and retry");
+    if (changed.count !== 1) throw new BusinessError("AI suggestion was reviewed concurrently; refresh and retry");
     const updatedOutput = { ...output, taskId: task.id } satisfies Prisma.InputJsonValue;
     const updated = await tx.aiSuggestion.update({ where: { id: suggestion.id }, data: { output: updatedOutput } });
     await recordAudit(tx, {
@@ -208,15 +267,18 @@ export async function assignTask(input: {
   assigneeId: string | null;
   actorId: string;
 } & AuditRequestMetadata) {
+  const projectId = await taskProjectId(input.taskId);
   return prisma.$transaction(async (tx) => {
+    await lockBusinessActor(tx, input.actorId, ["PM"], projectId, input.assigneeId ? [input.assigneeId] : []);
     const task = await tx.task.findUnique({ where: { id: input.taskId } });
-    if (!task) throw new Error("Task not found");
-    if (task.assigneeId === input.assigneeId) throw new Error("Task assignee is unchanged");
+    if (!task) throw new BusinessError("Task not found", 404);
+    if (task.assigneeId === input.assigneeId) throw new BusinessError("Task assignee is unchanged");
+    if (input.assigneeId && !await participant(tx, task.projectId, input.assigneeId)) throw new ProjectAccessError("负责人必须先加入项目", 400);
     const changed = await tx.task.updateMany({
       where: { id: task.id, assigneeId: task.assigneeId },
       data: { assigneeId: input.assigneeId },
     });
-    if (changed.count !== 1) throw new Error("Task changed concurrently; retry the operation");
+    if (changed.count !== 1) throw new BusinessError("Task changed concurrently; retry the operation");
     const updated = await tx.task.findUniqueOrThrow({ where: { id: task.id } });
     await recordAudit(tx, {
       actorId: input.actorId,
@@ -238,16 +300,19 @@ export async function reviewAiSuggestion(input: {
   decision: "ACCEPTED" | "REJECTED";
   actorId: string;
 } & AuditRequestMetadata) {
+  const projectId = await suggestionProjectId(input.suggestionId);
   return prisma.$transaction(async (tx) => {
+    await lockBusinessActor(tx, input.actorId, ["PM"], projectId);
     const suggestion = await tx.aiSuggestion.findUnique({ where: { id: input.suggestionId } });
-    if (!suggestion) throw new Error("AI suggestion not found");
-    if (suggestion.status !== "PENDING") throw new Error("AI suggestion has already been reviewed");
+    if (!suggestion) throw new BusinessError("AI suggestion not found", 404);
+    if (suggestion.type !== "WBS") throw new BusinessError("Suggestion is not a WBS task", 400);
+    if (suggestion.status !== "PENDING") throw new BusinessError("AI suggestion has already been reviewed");
     const reviewedAt = new Date();
     const changed = await tx.aiSuggestion.updateMany({
       where: { id: suggestion.id, status: "PENDING" },
       data: { status: input.decision, reviewedById: input.actorId, reviewedAt },
     });
-    if (changed.count !== 1) throw new Error("AI suggestion was reviewed concurrently; refresh and retry");
+    if (changed.count !== 1) throw new BusinessError("AI suggestion was reviewed concurrently; refresh and retry");
     const updated = await tx.aiSuggestion.findUniqueOrThrow({ where: { id: suggestion.id } });
     await recordAudit(tx, {
       actorId: input.actorId,
@@ -269,18 +334,20 @@ export async function reviewRiskSuggestion(input: {
   decision: "HANDLED" | "IGNORED";
   actorId: string;
 } & AuditRequestMetadata) {
+  const projectId = await suggestionProjectId(input.suggestionId);
   return prisma.$transaction(async (tx) => {
+    await lockBusinessActor(tx, input.actorId, ["PM"], projectId);
     const suggestion = await tx.aiSuggestion.findUnique({ where: { id: input.suggestionId } });
-    if (!suggestion) throw new Error("AI suggestion not found");
-    if (suggestion.type !== "RISK") throw new Error("Suggestion is not a risk warning");
-    if (suggestion.status !== "PENDING") throw new Error("Risk suggestion has already been reviewed");
+    if (!suggestion) throw new BusinessError("AI suggestion not found", 404);
+    if (suggestion.type !== "RISK") throw new BusinessError("Suggestion is not a risk warning", 400);
+    if (suggestion.status !== "PENDING") throw new BusinessError("Risk suggestion has already been reviewed");
     const status = input.decision === "HANDLED" ? "ACCEPTED" : "REJECTED";
     const reviewedAt = new Date();
     const changed = await tx.aiSuggestion.updateMany({
       where: { id: suggestion.id, type: "RISK", status: "PENDING" },
       data: { status, reviewedById: input.actorId, reviewedAt },
     });
-    if (changed.count !== 1) throw new Error("Risk suggestion was reviewed concurrently; refresh and retry");
+    if (changed.count !== 1) throw new BusinessError("Risk suggestion was reviewed concurrently; refresh and retry");
     const updated = await tx.aiSuggestion.findUniqueOrThrow({ where: { id: suggestion.id } });
     await recordAudit(tx, {
       actorId: input.actorId,
@@ -325,7 +392,7 @@ export async function recordRagSearch(input: {
   durationMs: number;
   degraded: boolean;
 } & AuditRequestMetadata) {
-  if (!Number.isFinite(input.durationMs) || input.durationMs < 0) throw new Error("Invalid RAG duration");
+  if (!Number.isFinite(input.durationMs) || input.durationMs < 0) throw new BusinessError("Invalid RAG duration");
   const queryLogId = randomUUID();
   return prisma.$transaction((tx) => recordAudit(tx, {
     actorId: input.actorId,

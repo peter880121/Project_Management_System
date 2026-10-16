@@ -5,6 +5,14 @@ const now = new Date("2026-10-12T00:00:00.000Z");
 const task = (id: string, extra: Partial<RiskTask> = {}): RiskTask => ({ id, title: "Synthetic task " + id, status: "IN_PROGRESS", dueDate: new Date("2026-10-20T00:00:00.000Z"), completedAt: null, assignee: null, dependencies: [], ...extra });
 
 describe("risk rules", () => {
+  it("flags overdue work even after it has started", () => {
+    const result = analyzeProjectRisks([task("overdue", { dueDate: new Date("2026-10-11") })], now);
+    expect(result[0].severity).toBe("HIGH"); expect(result[0].evidence.join(" ")).toContain("任务尚未完成");
+  });
+  it("flags incompatible prerequisite dates without changing the plan", () => {
+    const result = analyzeProjectRisks([task("order", { plannedStartDate: now, dependencies: [{ id: "pre", title: "Synthetic prerequisite", status: "TODO", dueDate: new Date("2026-10-13") }] })], now);
+    expect(result[0].evidence.join(" ")).toContain("核对排期顺序");
+  });
   it("flags a near deadline when work has not started", () => {
     const result = analyzeProjectRisks([task("near", { status: "TODO", dueDate: new Date("2026-10-15T00:00:00.000Z") })], now);
     expect(result[0]?.evidence.join(" ")).toContain("任务仍未开始");
