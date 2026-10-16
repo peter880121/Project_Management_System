@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/modules/auth/session";
 import { requireRole } from "@/modules/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { visibleProjectWhere } from "@/modules/auth/project-access";
+import { PageBreadcrumbs } from "@/components/layout/page-breadcrumbs";
 
 export const metadata = { title: "审计日志 · MedPM-AI" };
 
@@ -13,6 +14,7 @@ export default async function AuditPage() {
   const projects = await prisma.project.findMany({ where: visibleProjectWhere(actor!), select: { id: true, name: true }, orderBy: { name: "asc" } });
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-6 py-12">
+      <PageBreadcrumbs pathname="/audit" items={[{ label: "审计" }]} />
       <Link className="text-sm font-medium text-teal-700 hover:underline" href="/">返回工作台</Link>
       <h1 className="mt-5 text-3xl font-semibold tracking-tight">审计日志与合规审查</h1>
       <p className="mt-2 max-w-3xl text-slate-600">

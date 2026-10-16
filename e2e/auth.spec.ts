@@ -325,7 +325,7 @@ test("unauthenticated profile redirects to login and home navigation shows guest
   await page.goto("/");
   await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "登录", exact: true })).toBeVisible();
   await page.goto("/profile");
-  await expect(page).toHaveURL(/\/login\?next=\/profile$/);
+  await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("next") === "/profile");
 });
 
 test("profile shows account information and validates password fields", async ({ page }) => {
@@ -341,7 +341,9 @@ test("profile shows account information and validates password fields", async ({
   await expect(page.getByText("两次输入的密码不一致", { exact: true })).toBeVisible();
   await page.getByLabel("确认新密码", { exact: true }).fill(newPassword);
   await page.getByLabel("当前密码", { exact: true }).fill(`${password}-wrong`);
+  const invalidPasswordResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/users/me/password" && response.request().method() === "POST");
   await page.getByRole("button", { name: "修改密码", exact: true }).click();
+  expect((await invalidPasswordResponse).status()).toBe(400);
   await expect(page.locator("#currentPassword-error")).toHaveText("当前密码不正确");
   await expect(page.getByLabel("当前密码", { exact: true })).toBeFocused();
 });

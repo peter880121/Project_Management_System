@@ -4,6 +4,7 @@ import { getCurrentSession } from "@/modules/auth/session";
 import { getProfileForUser, type UserProfile } from "@/modules/auth/profile";
 import { AccountActions } from "./account-actions";
 import { LayoutFailureNotice } from "@/components/layout/layout-failure";
+import { PageBreadcrumbs } from "@/components/layout/page-breadcrumbs";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export default async function ProfilePage() {
     ["最后登录时间（UTC）", profile.lastLoginAt ? profile.lastLoginAt.toISOString().replace("T", " ").replace("Z", " UTC") : "暂无记录"],
   ];
   return <main className="mx-auto min-h-screen max-w-3xl px-6 py-10">
-
+    <PageBreadcrumbs pathname="/profile" items={[{ label: "个人资料" }]} />
     <h1 className="mb-6 mt-8 text-3xl font-semibold">个人资料</h1>
     <section aria-label="当前用户信息" className="mb-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <dl className="space-y-4">{details.map(([label, value]) => <div key={label} className="grid gap-1 sm:grid-cols-[10rem_1fr]">

@@ -6,6 +6,7 @@ import { listManagedUsers } from "@/modules/users/repositories";
 import { listUsersSchema } from "@/modules/users/schemas";
 import { UsersManager } from "./users-manager";
 import { LayoutFailureNotice } from "@/components/layout/layout-failure";
+import { PageBreadcrumbs } from "@/components/layout/page-breadcrumbs";
 
 export const dynamic = "force-dynamic";
 export default async function UsersPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -32,7 +33,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
     redirect(`/users?${params}`);
   }
   return <main className="mx-auto min-h-screen max-w-6xl px-6 py-10">
-
+    <PageBreadcrumbs pathname="/users" items={[{ label: "用户管理" }]} />
     <h1 className="mb-2 mt-8 text-3xl font-semibold">用户管理</h1>
     <p className="mb-6 text-sm text-slate-600">管理账号准入与角色。账号保留历史记录，所有变更均记录审计。</p>
     <UsersManager key={JSON.stringify(parsed.data)} actorId={actor.id} initial={result} query={parsed.data} />

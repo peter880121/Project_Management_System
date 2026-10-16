@@ -48,7 +48,9 @@ async function adminPage(page: Page, key: string, keyword?: string) {
   await expect(page.getByRole("heading", { name: "用户管理", exact: true })).toBeVisible();
 }
 async function confirm(page: Page) {
+  const response = page.waitForResponse(response => response.request().method() === "PATCH" && /^\/api\/users\/[^/]+\/(role|status)$/.test(new URL(response.url()).pathname));
   await page.getByRole("dialog", { name: "确认账号变更" }).getByRole("button", { name: "确认变更", exact: true }).click();
+  await response;
   await expect(page.getByRole("dialog", { name: "确认账号变更" })).toHaveCount(0);
 }
 async function noStoredPassword(page: Page) {
@@ -58,7 +60,7 @@ async function noStoredPassword(page: Page) {
 
 test("guest is redirected to login with users as next", async ({ page }) => {
   await page.goto("/users");
-  await expect(page).toHaveURL(/\/login\?next=\/users$/);
+  await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("next") === "/users");
 });
 for (const key of ["pm", "member", "qa"]) {
   test(`${key} cannot use management API/page or see its navigation entry`, async ({ page }) => {
