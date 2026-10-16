@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { tx, prismaMock, verifyPasswordMock, setCookieMock, createCredentialMock } = vi.hoisted(() => ({
   tx: {
+    $queryRaw: vi.fn(),
     user: { findUnique: vi.fn(), updateMany: vi.fn() },
     session: { deleteMany: vi.fn(), create: vi.fn() },
     auditLog: { create: vi.fn() },
@@ -21,6 +22,7 @@ vi.mock("@/modules/auth/session-token", () => ({
 }));
 
 import { POST } from "./route";
+import { Prisma } from "@prisma/client";
 
 const activeUser = {
   id: "00000000-0000-4000-8000-000000000123",
@@ -44,7 +46,7 @@ function requestFor(body: unknown) {
 describe("POST /api/auth/login", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    tx.user.findUnique.mockResolvedValue({ id: activeUser.id, status: "ACTIVE", lockedUntil: null, failedLoginCount: 0 });
+    tx.user.findUnique.mockResolvedValue({ id: activeUser.id, status: "ACTIVE", passwordHash: activeUser.passwordHash, lockedUntil: null, failedLoginCount: 0 });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
     tx.session.deleteMany.mockResolvedValue({ count: 0 });
     tx.session.create.mockResolvedValue({ id: "session-id" });
@@ -66,6 +68,7 @@ describe("POST /api/auth/login", () => {
     expect(tx.session.create).toHaveBeenCalledWith({ data: expect.objectContaining({ userId: activeUser.id, tokenHash: "a".repeat(64) }) });
     expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ actorId: activeUser.id, action: "LOGIN_SUCCESS" }) });
     expect(setCookieMock).toHaveBeenCalledWith("signed-db-credential");
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.user.findUnique.mock.invocationCallOrder[0]!);
   });
 
   it("returns the generic credential error and associates known-email audit with that user", async () => {
@@ -123,5 +126,27 @@ describe("POST /api/auth/login", () => {
       where: { id: activeUser.id, status: "ACTIVE", lockedUntil: null },
       data: { lockedUntil: expect.any(Date) },
     }));
+  });
+  it("does not issue a cookie or retry when the audit write fails", async () => {
+    tx.auditLog.create.mockRejectedValueOnce(new Error("Synthetic audit failure"));
+    const response = await POST(requestFor({ email: activeUser.email, password: "Password123" }));
+    expect(response.status).toBe(500);
+    expect(setCookieMock).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).toHaveBeenCalledOnce();
+  });
+  it("returns a retryable 503 after bounded conflicts without issuing a cookie", async () => {
+    prismaMock.$transaction.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Synthetic conflict", { code: "P2034", clientVersion: "test" }));
+    const response = await POST(requestFor({ email: activeUser.email, password: "Password123" }));
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(3);
+    expect(setCookieMock).not.toHaveBeenCalled();
+  });
+  it("rejects credentials changed while bcrypt was running", async () => {
+    tx.user.findUnique.mockResolvedValue({ ...activeUser, passwordHash: "changed-synthetic-hash" });
+    const response = await POST(requestFor({ email: activeUser.email, password: "Password123" }));
+    expect(response.status).toBe(401);
+    expect(tx.session.create).not.toHaveBeenCalled();
+    expect(setCookieMock).not.toHaveBeenCalled();
   });
 });

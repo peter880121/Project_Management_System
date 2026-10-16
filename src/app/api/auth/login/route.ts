@@ -7,6 +7,7 @@ import { verifyPassword } from "@/modules/auth/password";
 import { setSessionCookieFromCredential } from "@/modules/auth/session";
 import { recordFailedPasswordAttempt } from "@/modules/auth/login-policy";
 import { createDatabaseSessionCredential, SESSION_TTL_SECONDS } from "@/modules/auth/session-token";
+import { loginTransaction, lockLoginUser, LoginBusyError } from "@/modules/auth/login-transactions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,9 +37,10 @@ async function recordFailedAttempt(input: {
   email: string;
   reason: string;
   metadata: ReturnType<typeof requestMetadata>;
-  now: Date;
 }) {
-  return prisma.$transaction(async (tx) => {
+  return loginTransaction(async (tx) => {
+    if (input.userId) await lockLoginUser(tx, input.userId);
+    const now = new Date();
     const actorId = input.userId ?? SYSTEM_USER_ID;
     const entityId = input.userId ?? randomUUID();
     if (input.userId) {
@@ -46,7 +48,7 @@ async function recordFailedAttempt(input: {
         where: { id: input.userId },
         select: { id: true, status: true, failedLoginCount: true, lockedUntil: true },
       });
-      if (user?.status === "ACTIVE" && user.lockedUntil && user.lockedUntil.getTime() > input.now.getTime()) {
+      if (user?.status === "ACTIVE" && user.lockedUntil && user.lockedUntil.getTime() > now.getTime()) {
         await tx.auditLog.create({ data: {
           actorId,
           action: "LOGIN_FAILED",
@@ -58,10 +60,10 @@ async function recordFailedAttempt(input: {
         } });
         return "locked" as const;
       }
-      if (user?.status === "ACTIVE") {
-        if (user.lockedUntil && user.lockedUntil.getTime() <= input.now.getTime()) {
+      if (user?.status === "ACTIVE" && input.reason === "invalid_credentials") {
+        if (user.lockedUntil && user.lockedUntil.getTime() <= now.getTime()) {
           await tx.user.updateMany({
-            where: { id: user.id, lockedUntil: { lte: input.now } },
+            where: { id: user.id, lockedUntil: { lte: now } },
             data: { failedLoginCount: 0, lockedUntil: null },
           });
         }
@@ -77,7 +79,7 @@ async function recordFailedAttempt(input: {
           const nextState = updated ? recordFailedPasswordAttempt({
             failedLoginCount: Math.max(0, updated.failedLoginCount - 1),
             lockedUntil: null,
-            now: input.now,
+            now,
           }) : null;
           if (nextState?.locked && updated?.lockedUntil === null) {
             await tx.user.updateMany({
@@ -101,7 +103,7 @@ async function recordFailedAttempt(input: {
   });
 }
 
-export async function POST(request: Request) {
+async function login(request: Request) {
   let body: unknown;
   try {
     body = await request.json();
@@ -129,20 +131,20 @@ export async function POST(request: Request) {
   const now = new Date();
 
   if (!user) {
-    await recordFailedAttempt({ userId: null, email: input.email, reason: "invalid_credentials", metadata, now });
+    await recordFailedAttempt({ userId: null, email: input.email, reason: "invalid_credentials", metadata });
     return NextResponse.json({ error: INVALID_CREDENTIALS }, { status: 401 });
   }
   if (user.status === "PENDING") {
-    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "pending", metadata, now });
+    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "pending", metadata });
     // Product decision: the helpful activation message confirms this email has a PENDING account (P3 enumeration risk).
     return NextResponse.json({ error: "等待管理员激活" }, { status: 403 });
   }
   if (user.status === "DISABLED") {
-    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "disabled", metadata, now });
+    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "disabled", metadata });
     return NextResponse.json({ error: INVALID_CREDENTIALS }, { status: 401 });
   }
   if (user.lockedUntil && user.lockedUntil.getTime() > now.getTime()) {
-    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "locked", metadata, now });
+    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "locked", metadata });
     // Product decision: expose the lock state and recovery time; locked retries never extend the lock.
     return NextResponse.json({ error: "账号已锁定，请 15 分钟后重试" }, { status: 423 });
   }
@@ -156,7 +158,7 @@ export async function POST(request: Request) {
     }
   }
   if (!passwordMatches) {
-    const failure = await recordFailedAttempt({ userId: user.id, email: input.email, reason: "invalid_credentials", metadata, now });
+    const failure = await recordFailedAttempt({ userId: user.id, email: input.email, reason: "invalid_credentials", metadata });
     if (failure === "locked") {
       // A concurrent failed attempt may have locked the account while this request was checking the password.
       return NextResponse.json({ error: "账号已锁定，请 15 分钟后重试" }, { status: 423 });
@@ -166,9 +168,12 @@ export async function POST(request: Request) {
 
   const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);
   const credential = createDatabaseSessionCredential(user.id, expiresAt.getTime());
-  const authenticated = await prisma.$transaction(async (tx) => {
-    const current = await tx.user.findUnique({ where: { id: user.id }, select: { id: true, status: true, lockedUntil: true } });
+  const authenticated = await loginTransaction(async (tx) => {
+    await lockLoginUser(tx, user.id);
+    const now = new Date();
+    const current = await tx.user.findUnique({ where: { id: user.id }, select: { id: true, status: true, lockedUntil: true, passwordHash: true } });
     if (!current || current.status !== "ACTIVE") return { kind: "inactive" as const };
+    if (current.passwordHash !== user.passwordHash) return { kind: "inactive" as const };
     if (current.lockedUntil && current.lockedUntil.getTime() > now.getTime()) return { kind: "locked" as const };
 
     if (current.lockedUntil && current.lockedUntil.getTime() <= now.getTime()) {
@@ -205,14 +210,24 @@ export async function POST(request: Request) {
   });
 
   if (authenticated.kind === "inactive") {
-    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "inactive_during_login", metadata, now });
+    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "inactive_during_login", metadata });
     return NextResponse.json({ error: INVALID_CREDENTIALS }, { status: 401 });
   }
   if (authenticated.kind === "locked") {
-    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "locked", metadata, now });
+    await recordFailedAttempt({ userId: user.id, email: input.email, reason: "locked", metadata });
     return NextResponse.json({ error: "账号已锁定，请 15 分钟后重试" }, { status: 423 });
   }
 
   await setSessionCookieFromCredential(credential.credential);
   return NextResponse.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role } }, { status: 200 });
+}
+
+export async function POST(request: Request) {
+  try { return await login(request); }
+  catch (error) {
+    if (error instanceof LoginBusyError) return NextResponse.json({ error: "登录服务繁忙，请稍后重试" }, { status: 503, headers: { "Retry-After": "1" } });
+    // Prisma error details may contain password hashes or Session credentials.
+    console.error("Login operation failed");
+    return NextResponse.json({ error: "登录暂时不可用，请稍后重试" }, { status: 500 });
+  }
 }

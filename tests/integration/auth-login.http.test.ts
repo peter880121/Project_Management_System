@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { PrismaClient } from "@prisma/client";
@@ -9,6 +9,7 @@ import { hashPassword } from "@/modules/auth/password";
 import { SYSTEM_USER_ID } from "@/lib/system-user";
 import { verifyDatabaseSessionCredential } from "@/modules/auth/session-token";
 
+const validPassword = randomUUID() + "Aa1";
 const inviteCode = "integration-test-invite-code";
 const signingSecret = "auth-login-integration-session-secret-32-bytes";
 const activeUserId = "00000000-0000-4000-8000-0000000000a1";
@@ -122,7 +123,7 @@ describe.sequential("POST /api/auth/login over HTTP with real MySQL", () => {
   beforeAll(async () => {
     await admin.$executeRawUnsafe(`CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     runMigrations();
-    const passwordHash = await hashPassword("Password123");
+    const passwordHash = await hashPassword(validPassword);
     await withDatabase(async (db) => {
       await db.user.createMany({ data: [
         { id: SYSTEM_USER_ID, email: "auth-service@medpm.local", name: "Authentication system", role: "MEMBER", status: "DISABLED", isSystem: true },
@@ -161,7 +162,7 @@ describe.sequential("POST /api/auth/login over HTTP with real MySQL", () => {
 
   it("creates a database Session and exactly one LOGIN_SUCCESS audit row", async () => {
     const t1 = new Date(Date.now() - 1000);
-    const response = await postLogin(activeEmail, "Password123");
+    const response = await postLogin(activeEmail, validPassword);
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload).toEqual({ user: { id: activeUserId, email: activeEmail, name: "Synthetic Active User", role: "PM" } });
@@ -249,7 +250,7 @@ describe.sequential("POST /api/auth/login over HTTP with real MySQL", () => {
       data: { failedLoginCount: 5, lockedUntil: new Date(Date.now() - 60_000) },
     }));
     const testStart = new Date(Date.now() - 1000);
-    const response = await postLogin(email, "Password123");
+    const response = await postLogin(email, validPassword);
     expect(response.status).toBe(200);
     await withDatabase(async (db) => {
       const user = await db.user.findUniqueOrThrow({ where: { id: activeUserId } });
@@ -283,7 +284,7 @@ describe.sequential("POST /api/auth/login over HTTP with real MySQL", () => {
   it("returns the activation message for PENDING without counting a password failure", async () => {
     const email = "auth-login-pending@example.test";
     const testStart = new Date(Date.now() - 1000);
-    const response = await postLogin(email, "Password123");
+    const response = await postLogin(email, validPassword);
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "等待管理员激活" });
     await withDatabase(async (db) => {
@@ -298,7 +299,7 @@ describe.sequential("POST /api/auth/login over HTTP with real MySQL", () => {
   it("returns the generic error for DISABLED without counting a password failure", async () => {
     const email = "auth-login-disabled@example.test";
     const testStart = new Date(Date.now() - 1000);
-    const response = await postLogin(email, "Password123");
+    const response = await postLogin(email, validPassword);
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "邮箱或密码错误" });
     await withDatabase(async (db) => {
@@ -314,7 +315,7 @@ describe.sequential("POST /api/auth/login over HTTP with real MySQL", () => {
     const email = "auth-login-unknown@example.test";
     const testStart = new Date(Date.now() - 1000);
     const userCount = await withDatabase((db) => db.user.count());
-    const response = await postLogin(email, "Password123");
+    const response = await postLogin(email, validPassword);
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "邮箱或密码错误" });
     await withDatabase(async (db) => {
@@ -331,4 +332,79 @@ describe.sequential("POST /api/auth/login over HTTP with real MySQL", () => {
       expect(matching).toHaveLength(1);
     });
   });
+
+  it("allows eight concurrent logins for one account, preserving live sessions and auditing each once", async () => {
+    const email = "concurrent-success@example.test";
+    await setActiveFixtureEmail(email);
+    const expiredId = randomUUID(); const liveId = randomUUID();
+    await withDatabase((db) => db.$transaction((tx) => tx.session.createMany({ data: [
+      { id: expiredId, userId: activeUserId, tokenHash: randomBytes(32).toString("hex"), expiresAt: new Date(Date.now() - 60000) },
+      { id: liveId, userId: activeUserId, tokenHash: randomBytes(32).toString("hex"), expiresAt: new Date(Date.now() + 60000) },
+    ] })));
+    const start = new Date(Date.now() - 1000);
+    const responses = await Promise.all(Array.from({ length: 8 }, () => postLogin(email, validPassword)));
+    expect(responses.map((response) => response.status)).toEqual(Array(8).fill(200));
+    const claims = responses.map((response) => {
+      const cookie = /medpm_session=([^;]+)/.exec(response.headers.get("set-cookie") ?? "")?.[1];
+      expect(cookie).toBeTruthy();
+      return verifyDatabaseSessionCredential(decodeURIComponent(cookie!), signingSecret)!;
+    });
+    expect(new Set(claims.map((value) => value.sessionId)).size).toBe(8);
+    await withDatabase(async (db) => {
+      expect(await db.session.findUnique({ where: { id: expiredId } })).toBeNull();
+      expect(await db.session.findUnique({ where: { id: liveId } })).not.toBeNull();
+      expect(await db.session.count({ where: { userId: activeUserId } })).toBe(9);
+      for (const value of claims) expect((await db.session.findUniqueOrThrow({ where: { id: value.sessionId } })).tokenHash).toBe(value.tokenHash);
+      expect((await db.user.findUniqueOrThrow({ where: { id: activeUserId } })).failedLoginCount).toBe(0);
+    });
+    expect(await countRecentAudit({ action: "LOGIN_SUCCESS", actorId: activeUserId, email, testStart: start })).toBe(8);
+  }, 30000);
+
+  it("allows concurrent logins for different accounts when expired-session cleanup matches no rows", async () => {
+    const accounts = Array.from({ length: 4 }, () => ({ id: randomUUID(), email: `parallel-${randomUUID()}@example.test` }));
+    await withDatabase(async (db) => {
+      const source = await db.user.findUniqueOrThrow({ where: { id: activeUserId } });
+      await db.$transaction((tx) => tx.user.createMany({ data: accounts.map((account) => ({ ...account, name: "Synthetic parallel account", passwordHash: source.passwordHash, role: "PM", status: "ACTIVE" })) }));
+    });
+    const start = new Date(Date.now() - 1000);
+    const responses = await Promise.all(accounts.flatMap((account) => Array.from({ length: 2 }, () => postLogin(account.email, validPassword))));
+    expect(responses.map((response) => response.status)).toEqual(Array(8).fill(200));
+    for (const account of accounts) {
+      expect(await withDatabase((db) => db.session.count({ where: { userId: account.id } }))).toBe(2);
+      expect(await countRecentAudit({ action: "LOGIN_SUCCESS", actorId: account.id, email: account.email, testStart: start })).toBe(2);
+    }
+  }, 30000);
+
+  it("serializes eight concurrent wrong passwords at the five-attempt boundary without losing audit events", async () => {
+    const email = "concurrent-wrong@example.test";
+    await setActiveFixtureEmail(email);
+    const start = new Date(Date.now() - 1000);
+    const responses = await Promise.all(Array.from({ length: 8 }, () => postLogin(email, validPassword + "wrong")));
+    expect(responses.map((response) => response.status).sort()).toEqual([401, 401, 401, 401, 401, 423, 423, 423]);
+    const locked = await withDatabase((db) => db.user.findUniqueOrThrow({ where: { id: activeUserId } }));
+    expect(locked.failedLoginCount).toBe(5); expect(locked.lockedUntil).not.toBeNull();
+    expect(await withDatabase((db) => db.session.count({ where: { userId: activeUserId } }))).toBe(0);
+    expect(await countRecentAudit({ action: "LOGIN_FAILED", actorId: activeUserId, email, testStart: start })).toBe(8);
+    expect((await postLogin(email, validPassword)).status).toBe(423);
+    expect((await withDatabase((db) => db.user.findUniqueOrThrow({ where: { id: activeUserId } }))).lockedUntil).toEqual(locked.lockedUntil);
+  }, 30000);
+
+  it("rolls back session creation, cleanup and account state if login audit fails", async () => {
+    const expiredId = randomUUID();
+    await withDatabase((db) => db.$transaction((tx) => tx.session.create({ data: { id: expiredId, userId: activeUserId, tokenHash: randomBytes(32).toString("hex"), expiresAt: new Date(Date.now() - 60000) } })));
+    const before = await withDatabase((db) => db.user.findUniqueOrThrow({ where: { id: activeUserId } }));
+    function ddl(input: string) { execFileSync(process.execPath, [prismaCli, "db", "execute", "--stdin", "--schema", "prisma/schema.prisma"], { env: { ...process.env, DATABASE_URL: testDatabaseUrl.toString() }, input, stdio: "pipe" }); }
+    ddl("CREATE TRIGGER login_it_fail_audit BEFORE INSERT ON AuditLog FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'synthetic audit failure';");
+    try {
+      const success = await postLogin(activeEmail, validPassword);
+      expect(success.status).toBe(500); expect(success.headers.get("set-cookie")).toBeNull();
+      const failed = await postLogin(activeEmail, validPassword + "wrong");
+      expect(failed.status).toBe(500); expect(failed.headers.get("set-cookie")).toBeNull();
+      await withDatabase(async (db) => {
+        expect(await db.user.findUniqueOrThrow({ where: { id: activeUserId } })).toEqual(before);
+        expect(await db.session.count({ where: { userId: activeUserId } })).toBe(1);
+        expect(await db.session.findUnique({ where: { id: expiredId } })).not.toBeNull();
+      });
+    } finally { ddl("DROP TRIGGER login_it_fail_audit;"); }
+  }, 30000);
 });
