@@ -6,6 +6,7 @@ loadEnv();
 const baseURL = process.env.E2E_BASE_URL || "http://localhost:4000";
 
 export default defineConfig({
+  workers: 1,
   testDir: "./e2e",
   fullyParallel: false,
   reporter: "list",
