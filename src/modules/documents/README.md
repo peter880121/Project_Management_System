@@ -1,3 +1,3 @@
 # Documents
 
-Use MinIO for object storage and integrate MinerU here for PDF extraction. Only synthetic, non-PHI documents are permitted.
+Phase 1 implements bounded PDF uploads, lists, audited downloads and recovery. Phase 2 adds a MySQL-backed lease queue, MinerU cloud v4 adapter, standalone worker, versioned Markdown/structured previews and durable raw-artifact storage. Phase 3 adds immutable versioned chunks, leased vector indexing/retries, bounded semantic retrieval with MySQL keyword fallback, audited queries and source pages. WBS consumes the same audited evidence and persists context snapshots for human review. See `docs/document-rag.md` for APIs, model limitations and validation scope. Only synthetic, non-PHI documents are permitted.
