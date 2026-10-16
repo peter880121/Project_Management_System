@@ -19,6 +19,7 @@ async function getTarget(tx: Transaction, actorId: string, userId: string) {
   if (actorId === userId) throw new UserManagementError(403, "不能修改自己的角色或状态");
   const user = await findManagementIdentity(tx, userId);
   if (!user) throw new UserManagementError(404, "用户不存在");
+  if (actorId.toLowerCase() === user.id.toLowerCase()) throw new UserManagementError(403, "不能修改自己的角色或状态");
   if (user.isSystem) throw new UserManagementError(403, "不能修改系统账号");
   return user;
 }

@@ -132,6 +132,7 @@ describe.sequential("User management APIs over HTTP with real MySQL", () => {
     for (const path of ["role", "status"]) {
       const body = path === "role" ? { role: "QA" } : { status: "DISABLED" };
       expect((await http(`/api/users/${actorId}/${path}`, "PATCH", actorCookie, body)).status).toBe(403);
+      expect((await http(`/api/users/${actorId.toUpperCase()}/${path}`, "PATCH", actorCookie, body)).status).toBe(403);
       expect((await http(`/api/users/${SYSTEM_USER_ID}/${path}`, "PATCH", actorCookie, body)).status).toBe(403);
       expect((await http(`/api/users/${randomUUID()}/${path}`, "PATCH", actorCookie, body)).status).toBe(404);
     }

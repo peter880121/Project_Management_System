@@ -50,6 +50,12 @@ describe("audited user management services", () => {
     mocks.identity.mockImplementation((_tx, id) => Promise.resolve(id === actor.id ? actor : { ...target, isSystem: true }));
     await expect(changeManagedUserRole({ actorId: actor.id, userId: target.id, role: "QA" })).rejects.toMatchObject({ status: 403 });
   });
+  it("rejects self changes through a differently cased identifier resolving to the same account", async () => {
+    mocks.identity.mockResolvedValue(actor);
+    await expect(changeManagedUserRole({ actorId: actor.id, userId: actor.id.toUpperCase(), role: "QA" })).rejects.toMatchObject({ status: 403 });
+    await expect(changeManagedUserStatus({ actorId: actor.id, userId: actor.id.toUpperCase(), status: "DISABLED" })).rejects.toMatchObject({ status: 403 });
+    expect(mocks.role).not.toHaveBeenCalled(); expect(mocks.status).not.toHaveBeenCalled(); expect(mocks.audit).not.toHaveBeenCalled();
+  });
   it("records before/after role without returning sensitive fields", async () => {
     expect(await changeManagedUserRole({ actorId: actor.id, userId: target.id, role: "QA" })).toEqual({ id: target.id, role: "QA" });
     expect(mocks.audit).toHaveBeenCalledWith("tx", expect.objectContaining({ action: "PERMISSION_CHANGED", before: { role: "MEMBER" }, after: { role: "QA" } }));

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma, type Role, type UserStatus } from "@prisma/client";
 import type { ListUsersQuery } from "./schemas";
+export { lockUsers } from "@/modules/auth/transaction-locks";
 
 const safeUserSelect = { id: true, name: true, email: true, role: true, status: true, lastLoginAt: true, createdAt: true } satisfies Prisma.UserSelect;
 export type UserListItem = { id: string; name: string; email: string; role: Role; status: UserStatus; lastLoginAt: string | null; createdAt: string };
@@ -18,10 +19,6 @@ export async function listManagedUsers(query: ListUsersQuery): Promise<UserListR
   return { data: rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString(), lastLoginAt: row.lastLoginAt?.toISOString() ?? null })), total, page: query.page, pageSize: query.pageSize };
 }
 
-export async function lockUsers(tx: Prisma.TransactionClient, ids: string[]) {
-  // Parameterized locking reads serialize actor/target checks; deterministic order limits deadlocks.
-  await tx.$queryRaw(Prisma.sql`SELECT id FROM User WHERE id IN (${Prisma.join([...new Set(ids)].sort())}) ORDER BY id FOR UPDATE`);
-}
 export function findManagementIdentity(tx: Prisma.TransactionClient, id: string) {
   return tx.user.findUnique({ where: { id }, select: { id: true, role: true, status: true, isSystem: true } });
 }
