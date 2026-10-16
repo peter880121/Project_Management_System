@@ -32,7 +32,7 @@ test("PM maintains planning/capacity, scans cross-project overload, and QA remai
   const member = page.locator("article").filter({ has: page.getByRole("heading", { name: memberName, exact: true }) });
   await member.getByLabel(`本周容量 ${memberName}`, { exact: true }).fill("40"); await member.getByRole("button", { name: "保存容量", exact: true }).click();
   await expect(member.getByText(/计划工时 60 小时 · 容量 40 小时 · 超出容量/)).toBeVisible();
-  await page.goto(`/projects/${projectId}/board`); await page.getByRole("button", { name: "扫描项目风险", exact: true }).click();
+  await page.goto(`/projects/${projectId}/risks`); await page.getByRole("button", { name: "扫描项目风险", exact: true }).click();
   await expect(page.getByText(/跨项目计划工时 60 小时，超过已配置容量 40 小时/)).toBeVisible({ timeout: 15000 });
   expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("TODO");
   expect(await db.auditLog.count({ where: { entityId: taskId, action: "TASK_SCHEDULE_UPDATED" } })).toBe(1);

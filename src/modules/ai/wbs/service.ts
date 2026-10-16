@@ -9,8 +9,9 @@ import type { AuditRequestMetadata } from "@/modules/audit/service";
 import { getConfiguredLlm } from "@/modules/ai/chat-model";
 import { retrieveHistoricalTasks, type HistoryRetrieval } from "./history";
 import { searchProjectDocuments } from "@/modules/documents/rag-service";
-import { WBS_SYSTEM_PROMPT, WBS_DOCUMENT_INSTRUCTIONS } from "./prompt";
+import { WBS_SYSTEM_PROMPT, WBS_DOCUMENT_INSTRUCTIONS, WBS_OUTPUT_LIMITS } from "./prompt";
 import { wbsResponseSchema, type WbsResponse, type WbsDocumentEvidence } from "./types";
+import { classifyWbsFailure, WbsResponseError, WbsTimeoutError, type WbsFailureCode } from "./failure";
 
 export type WbsGenerationInput = {
   projectId: string;
@@ -26,6 +27,7 @@ export type WbsGenerationResult = Readonly<{
   model: string;
   modelDurationMs: number;
   manualFallback: boolean;
+  failureCode?: WbsFailureCode;
 }>;
 
 export function summarizeWbsInput(request: string): string {
@@ -46,7 +48,7 @@ export function parseWbsResponse(raw: string): WbsResponse {
   const unfenced = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = unfenced.indexOf("{");
   const end = unfenced.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("Model response did not contain a JSON object");
+  if (start < 0 || end <= start) throw new WbsResponseError("Model response did not contain a JSON object");
   return wbsResponseSchema.parse(JSON.parse(unfenced.slice(start, end + 1)));
 }
 
@@ -64,7 +66,7 @@ export async function invokeWbsModel(
   })), documentEvidence });
   const response = parseWbsResponse(await invoke(context));
   const allowed = new Set(documentEvidence.map((source) => source.id));
-  if (response.tasks.some((task) => task.sourceChunkIds.some((id) => !allowed.has(id)))) throw new Error("Model cited a document chunk outside the supplied evidence");
+  if (response.tasks.some((task) => task.sourceChunkIds.some((id) => !allowed.has(id)))) throw new WbsResponseError("Model cited a document chunk outside the supplied evidence");
   return response;
 }
 
@@ -73,17 +75,17 @@ export async function generateOrEmpty(
   historicalTasks: HistoryRetrieval["tasks"],
   invoke: (prompt: string) => Promise<string>,
   documentEvidence: WbsDocumentEvidence[] = [],
-): Promise<{ tasks: WbsResponse["tasks"]; error?: string }> {
+): Promise<{ tasks: WbsResponse["tasks"]; error?: string; failureCode?: WbsFailureCode }> {
   try {
     return { tasks: (await invokeWbsModel(request, historicalTasks, invoke, documentEvidence)).tasks };
   } catch (error) {
-    return { tasks: [], error: error instanceof Error ? error.message : "LLM request failed" };
+    return { tasks: [], error: error instanceof Error ? error.message : "LLM request failed", failureCode: classifyWbsFailure(error) };
   }
 }
 
 function messageText(messageContent: unknown): string {
   if (typeof messageContent === "string") return messageContent;
-  if (!Array.isArray(messageContent)) throw new Error("Model response was not text");
+  if (!Array.isArray(messageContent)) throw new WbsResponseError("Model response was not text");
   return messageContent.map((part) => {
     if (typeof part === "string") return part;
     if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
@@ -91,14 +93,14 @@ function messageText(messageContent: unknown): string {
   }).join("");
 }
 
-async function saveGenerationFailure(input: WbsGenerationInput, batchId: string, summary: string, model: string, durationMs: number, reason: string) {
+async function saveGenerationFailure(input: WbsGenerationInput, batchId: string, summary: string, model: string, durationMs: number, reason: string, correctionAttempts = 0) {
   await prisma.$transaction((tx) => recordAudit(tx, {
     actorId: input.actorId,
     projectId: input.projectId,
     action: "AI_WBS_GENERATION_FAILED",
     entityType: "WbsGeneration",
     entityId: batchId,
-    after: { inputSummary: summary, model, durationMs, result: "MANUAL_TASK_CREATION", reason: reason.slice(0, 300) },
+    after: { inputSummary: summary, model, durationMs, correctionAttempts, result: "MANUAL_TASK_CREATION", reason: reason.slice(0, 300) },
     ip: input.ip,
     userAgent: input.userAgent,
   }));
@@ -109,7 +111,7 @@ async function invokeWithTimeout<T>(operation: Promise<T>, timeoutMs: number): P
   try {
     return await Promise.race([
       operation,
-      new Promise<T>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Model request timed out")), timeoutMs); }),
+      new Promise<T>((_resolve, reject) => { timer = setTimeout(() => reject(new WbsTimeoutError("Model request timed out")), timeoutMs); }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
@@ -140,28 +142,35 @@ export async function generateWbsSuggestions(input: WbsGenerationInput): Promise
   let configuredModel = process.env.AI_MODEL || "unconfigured";
   let model: BaseChatModel;
   try {
-    const configured = getConfiguredLlm();
+    const configured = getConfiguredLlm({ jsonMode: true });
     configuredProvider = configured.provider;
     configuredModel = configured.modelName;
     model = configured.model;
   } catch {
     const reason = "LLM_CONFIGURATION_MISSING_OR_INVALID";
     await saveGenerationFailure(input, batchId, summary, `${configuredProvider}:${configuredModel}`, 0, reason);
-    return { suggestions: [], historicalTasks: retrieval.tasks, documentEvidence, degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs: 0, manualFallback: true };
+    return { suggestions: [], historicalTasks: retrieval.tasks, documentEvidence, degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs: 0, manualFallback: true, failureCode: reason };
   }
 
   const modelStartedAt = Date.now();
-  const generated = await generateOrEmpty(input.request, retrieval.tasks, async (context) => {
+  const invoke = async (context: string, correct = false) => {
     const response = await invokeWithTimeout(model.invoke([
-      new SystemMessage(`${WBS_SYSTEM_PROMPT}\n${WBS_DOCUMENT_INSTRUCTIONS}`),
+      new SystemMessage(`${WBS_SYSTEM_PROMPT}\n${WBS_DOCUMENT_INSTRUCTIONS}\n${WBS_OUTPUT_LIMITS}`),
       new HumanMessage(context),
+      ...(correct ? [new HumanMessage("The previous output failed validation. Return corrected JSON with at most 12 tasks, numeric hours, allowed roles, acyclic zero-based dependency indexes, bounded title/description lengths and only supplied sourceChunkIds. Do not add prose or extra fields.")] : []),
     ]), 30_000);
     return messageText(response.content);
-  }, documentEvidence);
+  };
+  let generated = await generateOrEmpty(input.request, retrieval.tasks, context => invoke(context), documentEvidence);
+  let correctionAttempts = 0;
+  if (generated.failureCode === "MODEL_RESPONSE_INVALID") {
+    correctionAttempts = 1;
+    generated = await generateOrEmpty(input.request, retrieval.tasks, context => invoke(context, true), documentEvidence);
+  }
   if (generated.error) {
     const durationMs = Date.now() - modelStartedAt;
-    await saveGenerationFailure(input, batchId, summary, `${configuredProvider}:${configuredModel}`, durationMs, "LLM_REQUEST_OR_RESPONSE_VALIDATION_FAILED");
-    return { suggestions: [], historicalTasks: retrieval.tasks, documentEvidence, degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs: durationMs, manualFallback: true };
+    await saveGenerationFailure(input, batchId, summary, `${configuredProvider}:${configuredModel}`, durationMs, generated.failureCode ?? "MODEL_REQUEST_FAILED", correctionAttempts);
+    return { suggestions: [], historicalTasks: retrieval.tasks, documentEvidence, degraded, model: `${configuredProvider}:${configuredModel}`, modelDurationMs: durationMs, manualFallback: true, failureCode: generated.failureCode };
   }
   const tasks = generated.tasks;
   const modelDurationMs = Date.now() - modelStartedAt;
@@ -179,6 +188,7 @@ export async function generateWbsSuggestions(input: WbsGenerationInput): Promise
       retrievalDegraded: retrieval.degraded,
       retrievalDurationMs: retrieval.durationMs,
       modelDurationMs,
+      correctionAttempts,
       documentEvidence,
       documentRetrieval: { hitIds: documents.hitIds, degraded: documents.degraded, mode: documents.mode, reason: documents.reason, durationMs: documents.durationMs },
     },

@@ -17,5 +17,5 @@ export default async function DocumentsPage({ params }: { params: Promise<{ proj
   if (!await hasProjectAccess(actor!, projectId)) notFound();
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true, name: true } });
   if (!project) notFound();
-  return <main className="mx-auto max-w-5xl space-y-5 p-8"><Link href={`/projects/${projectId}/board`} className="text-teal-800 underline">← 返回看板</Link><h1 className="text-3xl font-semibold">{project.name} · 项目文档</h1><p>仅上传合成数据 PDF，最大 20 MB。下载会记录操作者和文档范围。支持异步云端解析、结果预览和带来源的文档检索。</p><DocumentSearchPanel projectId={projectId} /><DocumentsManager projectId={projectId} role={actor!.role} /></main>;
+  return <main className="mx-auto max-w-5xl space-y-5 p-8"><Link href={`/projects/${projectId}/board`} className="back-link text-teal-800 underline">← 返回看板</Link><h1 className="text-3xl font-semibold">{project.name} · 项目文档</h1><p>仅上传合成数据 PDF，最大 20 MB。下载会记录操作者和文档范围。支持异步云端解析、结果预览和带来源的文档检索。</p><DocumentSearchPanel projectId={projectId} /><DocumentsManager projectId={projectId} role={actor!.role} /></main>;
 }

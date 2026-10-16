@@ -8,6 +8,8 @@ import { requireRole } from "@/modules/auth/rbac";
 import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 import { containsLikelySensitiveInput, generateWbsSuggestions } from "@/modules/ai/wbs/service";
 import { storedDocumentEvidence } from "@/modules/ai/wbs/types";
+import { dependencyIds, suggestionTitle } from "@/modules/ai/wbs/review-state";
+import { wbsFailureMessage } from "@/modules/ai/wbs/failure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +33,12 @@ async function GETHandler(_request: Request, context: { params: Promise<{ projec
     take: 90,
   });
   const ids = [...new Set(suggestions.flatMap((suggestion) => getHistoryIds(suggestion.input)))];
+  const prerequisiteIds = [...new Set(suggestions.flatMap(s => dependencyIds(s.output)))];
+  const prerequisites = prerequisiteIds.length ? await prisma.aiSuggestion.findMany({
+    where: { id: { in: prerequisiteIds }, projectId, type: "WBS" },
+    select: { id: true, output: true, status: true },
+  }) : [];
+  const prerequisiteById = new Map(prerequisites.map(s => [s.id, s]));
   const history = ids.length === 0 ? [] : await prisma.task.findMany({
     where: { id: { in: ids }, projectId, status: "DONE", actualHours: { not: null }, completedAt: { not: null } },
     select: { id: true, title: true, description: true, actualHours: true, createdAt: true, completedAt: true },
@@ -39,6 +47,10 @@ async function GETHandler(_request: Request, context: { params: Promise<{ projec
   return NextResponse.json({ data: suggestions.map((suggestion) => ({
     id: suggestion.id,
     output: suggestion.output,
+    prerequisites: dependencyIds(suggestion.output).map(id => {
+      const prerequisite = prerequisiteById.get(id);
+      return { id, title: prerequisite ? suggestionTitle(prerequisite.output) : "未知前置任务", status: prerequisite?.status ?? "MISSING" };
+    }),
     createdAt: suggestion.createdAt,
     documentEvidence: storedDocumentEvidence(suggestion.input),
     history: getHistoryIds(suggestion.input).flatMap((id) => {
@@ -79,7 +91,8 @@ async function POSTHandler(request: Request, context: { params: Promise<{ projec
     model: result.model,
     modelDurationMs: result.modelDurationMs,
     manualFallback: result.manualFallback,
-    message: result.manualFallback ? "AI generation failed; create tasks manually." : undefined,
+    failureCode: result.failureCode,
+    message: result.manualFallback ? wbsFailureMessage(result.failureCode) : undefined,
   }, { status: result.manualFallback ? 200 : 201 });
 }
 

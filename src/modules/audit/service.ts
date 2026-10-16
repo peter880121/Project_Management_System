@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { canTransitionTaskStatus } from "@/modules/tasks/status";
 import { assertProjectAccessTx, participant, ProjectAccessError, lockBusinessActor } from "@/modules/auth/project-access";
 import { BusinessError } from "./errors";
+import { prerequisiteMessage, suggestionTitle } from "@/modules/ai/wbs/review-state";
 
 async function taskProjectId(id: string) {
   const row = await prisma.task.findUnique({ where: { id }, select: { projectId: true } });
@@ -209,10 +210,14 @@ export async function acceptWbsSuggestion(input: {
     if (!parsedOutput.success) throw new BusinessError("WBS suggestion has an invalid task payload");
     const output = parsedOutput.data;
     const dependencySuggestions = output.dependencyIds.length === 0 ? [] : await tx.aiSuggestion.findMany({
-      where: { id: { in: output.dependencyIds }, projectId: suggestion.projectId, type: "WBS", status: "ACCEPTED" },
+      where: { id: { in: output.dependencyIds }, projectId: suggestion.projectId, type: "WBS" },
     });
-    if (dependencySuggestions.length !== output.dependencyIds.length) {
-      throw new BusinessError("Accept or remove prerequisite suggestions before accepting this task");
+    if (dependencySuggestions.length !== output.dependencyIds.length || dependencySuggestions.some(d => d.status !== "ACCEPTED")) {
+      const byId = new Map(dependencySuggestions.map(d => [d.id, d]));
+      throw new BusinessError(prerequisiteMessage(output.dependencyIds.map(id => {
+        const dependency = byId.get(id);
+        return { id, title: dependency ? suggestionTitle(dependency.output) : "未知前置任务", status: dependency?.status ?? "MISSING" };
+      })));
     }
     const dependencyTaskIds = dependencySuggestions.flatMap((dependency) => {
       const dependencyOutput = acceptedWbsPayloadSchema.safeParse(dependency.output);

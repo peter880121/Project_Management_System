@@ -1,19 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
 import { PasswordForm } from "./password-form";
-import { LogoutButton } from "./logout-button";
+import { useAccountActionLock } from "@/components/account-action-lock";
 
 export function AccountActions() {
-  const lock = useRef(false);
-  const [busy, setBusy] = useState(false);
-  function acquire() {
-    if (lock.current) return false;
-    lock.current = true;
-    setBusy(true);
-    return true;
-  }
-  function release() { lock.current = false; setBusy(false); }
+  const { busy, acquire, release } = useAccountActionLock();
   return <div className="space-y-8">
     <section aria-labelledby="password-heading" className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 id="password-heading" className="mb-5 text-xl font-semibold">修改密码</h2>
@@ -22,7 +13,7 @@ export function AccountActions() {
     <section aria-labelledby="logout-heading" className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 id="logout-heading" className="mb-2 text-xl font-semibold">登出账号</h2>
       <p className="mb-4 text-sm text-slate-600">登出当前设备，其他设备的登录不受影响。</p>
-      <LogoutButton busy={busy} acquire={acquire} release={release} />
+      <p className="text-sm text-slate-600">使用页面顶部主导航中的「登出」按钮。</p>
     </section>
   </div>;
 }

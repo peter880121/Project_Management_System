@@ -14,7 +14,7 @@ export default async function ChunkSourcePage({ params }: { params: Promise<{ pr
   if (!await hasProjectAccess(user!, projectId)) notFound();
   const chunk = await chunkSource(chunkId); if (!chunk || chunk.projectId !== projectId) notFound();
   return <main className="mx-auto max-w-4xl space-y-4 p-8">
-    <Link href={`/projects/${projectId}/documents`} className="text-teal-800 underline">← 返回项目文档</Link>
+    <Link href={`/projects/${projectId}/documents`} className="back-link text-teal-800 underline">← 返回项目文档</Link>
     <h1 className="text-2xl font-semibold">文档引用 · {chunk.document.filename}</h1>
     <p>解析版本 v{chunk.version} · 分块 {chunk.ordinal + 1} · {chunk.page === null ? "来源未提供页码" : `第 ${chunk.page} 页`}</p>
     {chunk.version !== chunk.document.parsedVersion && <p className="text-amber-800">这是保留的历史证据，当前成功版本为 v{chunk.document.parsedVersion}。</p>}

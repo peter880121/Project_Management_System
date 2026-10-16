@@ -23,7 +23,7 @@ function asIsoDate(value: string): string | undefined {
   return value ? new Date(value).toISOString() : undefined;
 }
 
-export default function AuditLogViewer({ canReview = false }: { canReview?: boolean }) {
+export default function AuditLogViewer({ canReview = false, projects = [] }: { canReview?: boolean; projects?: { id: string; name: string }[] }) {
   const [projectId, setProjectId] = useState("");
   const [actorId, setActorId] = useState("");
   const [action, setAction] = useState("");
@@ -36,7 +36,7 @@ export default function AuditLogViewer({ canReview = false }: { canReview?: bool
   const [summaryLoading, setSummaryLoading] = useState(false);
 
   async function scan() {
-    if (!projectId.trim()) { setMessage("生成合规摘要前请填写项目 ID。"); return; }
+    if (!projectId.trim()) { setMessage("请先选择要生成合规摘要的项目。"); return; }
     setSummaryLoading(true);
     setSummary(null);
     const fromIso = asIsoDate(from);
@@ -96,8 +96,11 @@ export default function AuditLogViewer({ canReview = false }: { canReview?: bool
     <section className="mt-8">
       <form onSubmit={search} className="grid gap-4 rounded-xl border border-slate-200 bg-white p-5 md:grid-cols-2 lg:grid-cols-3">
         <label className="grid gap-1 text-sm font-medium">
-          项目 ID
-          <input className="rounded-md border border-slate-300 px-3 py-2 font-normal" value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder="UUID" />
+          项目
+          <select aria-label="选择审计项目" className="rounded-md border border-slate-300 px-3 py-2 font-normal" value={projectId} onChange={(event) => { setProjectId(event.target.value); setSummary(null); setRows([]); }}>
+            <option value="">全部可访问项目（生成摘要需选定一个项目）</option>
+            {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
         </label>
         <label className="grid gap-1 text-sm font-medium">
           操作人 ID

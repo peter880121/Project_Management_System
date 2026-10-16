@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { FormMessage } from "@/components/auth/form-message";
 
-export function LogoutButton({ busy, acquire, release }: { busy: boolean; acquire: () => boolean; release: () => void }) {
+export function LogoutButton({ busy, acquire, release, icon, className, menuItem = false }: { busy: boolean; acquire: () => boolean; release: () => void; icon?: ReactNode; className?: string; menuItem?: boolean }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const messageRef = useRef<HTMLDivElement>(null);
@@ -23,6 +23,6 @@ export function LogoutButton({ busy, acquire, release }: { busy: boolean; acquir
   }
   return <div className="space-y-4">
     {error && <FormMessage ref={messageRef} message={error} />}
-    <Button type="button" variant="outline" disabled={busy} aria-busy={pending} onClick={logout}>{pending ? "登出中…" : "登出"}</Button>
+    <Button type="button" role={menuItem ? "menuitem" : undefined} tabIndex={menuItem ? -1 : undefined} variant="outline" className={className} disabled={busy} aria-busy={pending} onClick={logout}>{icon}{pending ? "登出中…" : "登出"}</Button>
   </div>;
 }

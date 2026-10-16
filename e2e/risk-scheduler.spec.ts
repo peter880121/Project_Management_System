@@ -17,7 +17,7 @@ test.afterAll(async () => { try { await db.$transaction(async (tx) => { await tx
 test("PM enables automatic scanning, receives private audited notification, and marks it read", async ({ page }) => {
   test.setTimeout(90000);
   expect((await page.request.post("/api/auth/login", { data: { email, password } })).status()).toBe(200);
-  await page.goto(`/projects/${projectId}/board`);
+  await page.goto(`/projects/${projectId}/risks`);
   await page.getByLabel("启用自动风险扫描", { exact: true }).check(); await page.getByRole("button", { name: "保存扫描计划", exact: true }).click();
   await expect.poll(async () => db.riskScanJob.count({ where: { projectId, status: "SUCCEEDED" } }), { timeout: 45000 }).toBe(1);
   expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("TODO");

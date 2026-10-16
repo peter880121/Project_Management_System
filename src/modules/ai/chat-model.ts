@@ -11,7 +11,7 @@ const DEFAULT_MODELS: Record<LlmProvider, string> = {
   google: "gemini-3.8-flash",
 };
 
-export function getConfiguredLlm(): { model: BaseChatModel; provider: LlmProvider; modelName: string } {
+export function getConfiguredLlm(options: { jsonMode?: boolean } = {}): { model: BaseChatModel; provider: LlmProvider; modelName: string } {
   const configuredProvider = process.env.AI_PROVIDER || "openai";
   if (configuredProvider !== "openai" && configuredProvider !== "anthropic" && configuredProvider !== "google") {
     throw new Error("AI_PROVIDER must be openai, anthropic, or google");
@@ -20,7 +20,7 @@ export function getConfiguredLlm(): { model: BaseChatModel; provider: LlmProvide
   const modelName = process.env.AI_MODEL || process.env.LLM_DEFAULT_MODEL || DEFAULT_MODELS[provider];
   if (provider === "openai") {
     if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
-    return { model: new ChatOpenAI({ model: modelName, apiKey: process.env.OPENAI_API_KEY, temperature: 0, timeout: 30000, maxRetries: 0, configuration: process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : undefined }), provider, modelName };
+    return { model: new ChatOpenAI({ model: modelName, apiKey: process.env.OPENAI_API_KEY, temperature: 0, timeout: 30000, maxRetries: 0, ...(options.jsonMode ? { modelKwargs: { response_format: { type: "json_object" } } } : {}), configuration: process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : undefined }), provider, modelName };
   }
   if (provider === "anthropic") {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");

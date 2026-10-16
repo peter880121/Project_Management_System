@@ -22,7 +22,8 @@ describe("profile server page", () => {
     expect(getProfile).toHaveBeenCalledWith(profile.id);
     expect(html).toContain(profile.email);
     expect(html).toContain("2026-10-14 00:00:00.000 UTC");
-    expect(html).toContain('aria-label="主导航"');
+    // Shared navigation is rendered by the root layout and tested in app-header.test.ts.
+    expect(html).toContain("个人资料");
     expect(html).not.toContain("session-id");
   });
   it("redirects without querying profile when unauthenticated", async () => {

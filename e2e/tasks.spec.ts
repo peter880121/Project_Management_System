@@ -23,6 +23,7 @@ test("PM creates a task, changes its status, and reviews requirement and audit h
   const title = `E2E task ${Date.now()}`;
   await page.goto(`/projects/${projectId}/board`);
   await expect(page.getByRole("heading", { name: "Atlas Release Readiness" })).toBeVisible();
+  await page.getByRole("link", { name: "创建任务", exact: true }).click();
   await page.getByLabel("任务标题").fill(title);
   await page.getByLabel("关联需求").selectOption(requirementId);
   await page.getByRole("button", { name: "创建任务" }).click();
@@ -34,7 +35,7 @@ test("PM creates a task, changes its status, and reviews requirement and audit h
   await assignee.selectOption("00000000-0000-4000-8000-000000000003");
   await expect(taskCard.getByText("负责人：Synthetic Engineer", { exact: true })).toBeVisible();
   await taskCard.getByRole("button", { name: "开始 / 恢复" }).click();
-  await expect(page.getByRole("status")).toContainText("审计时间线");
+  await expect(page.getByRole("status").filter({ hasText: "审计时间线" })).toBeVisible();
   const taskUrl = new URL((await task.getAttribute("href"))!, page.url()).toString();
   await page.goto(taskUrl);
   await expect(page.getByRole("heading", { name: title })).toBeVisible();

@@ -38,7 +38,7 @@ test("QA scans six gaps, reviews findings and summary, follows evidence, and rec
   test.setTimeout(120000);
   expect((await page.request.post("/api/auth/login", { data: { email: emails[0], password } })).status()).toBe(200);
   await page.goto("/audit");
-  await page.getByLabel("项目 ID", { exact: true }).fill(projectId);
+  await page.getByLabel("选择审计项目", { exact: true }).selectOption(projectId);
   await page.getByRole("button", { name: "生成合规摘要", exact: true }).click();
   const panel = page.getByRole("region", { name: "合规审计摘要", exact: true });
   await expect(panel.getByRole("heading", { name: "合规审计摘要 · PENDING", exact: true })).toBeVisible({ timeout: 45000 });
@@ -50,7 +50,7 @@ test("QA scans six gaps, reviews findings and summary, follows evidence, and rec
   await panel.getByLabel("摘要复核说明", { exact: true }).fill("Reviewed synthetic snapshot; acceptance does not approve release.");
   await panel.getByRole("button", { name: "提交摘要复核", exact: true }).click();
   await expect(panel.getByRole("heading", { name: "合规审计摘要 · ACCEPTED", exact: true })).toBeVisible();
-  await page.reload(); await page.getByLabel("项目 ID", { exact: true }).fill(projectId);
+  await page.reload(); await page.getByLabel("选择审计项目", { exact: true }).selectOption(projectId);
   await page.getByRole("button", { name: "查询历史摘要", exact: true }).click();
   await page.getByRole("button", { name: /ACCEPTED/ }).click();
   await expect(page.getByText("Confirmed synthetic missing requirement; PM to correct.", { exact: false })).toBeVisible();
@@ -69,7 +69,7 @@ test("QA scans six gaps, reviews findings and summary, follows evidence, and rec
   await taskRow.getByRole("button", { name: "确认适配当前需求版本", exact: true }).click();
   await expect(taskRow.getByText("当前需求 v2 · 已复核版本：2", { exact: true })).toBeVisible();
   // A reviewed version emits an audit reference that can be opened outside a filtered list.
-  await page.goto("/audit"); await page.getByLabel("项目 ID", { exact: true }).fill(projectId);
+  await page.goto("/audit"); await page.getByLabel("选择审计项目", { exact: true }).selectOption(projectId);
   await page.getByRole("button", { name: "生成合规摘要", exact: true }).click();
   await expect(page.getByRole("heading", { name: "合规审计摘要 · PENDING", exact: true })).toBeVisible({ timeout: 45000 });
   await page.getByRole("link", { name: /^审计记录 / }).first().click();

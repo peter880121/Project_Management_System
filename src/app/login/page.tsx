@@ -4,6 +4,7 @@ import { AuthCard } from "@/components/auth/auth-card";
 import { getCurrentUser } from "@/modules/auth/session";
 import { getSafeRedirect } from "@/modules/auth/redirect";
 import { LoginForm } from "./login-form";
+import { LayoutFailureNotice } from "@/components/layout/layout-failure";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +15,9 @@ export default async function LoginPage({ searchParams }: {
   try {
     user = await getCurrentUser();
   } catch {
-    return <AuthCard title="暂时无法加载，请重试" description="暂时无法确认登录状态，请稍后重新加载。">
+    return <LayoutFailureNotice><AuthCard title="暂时无法加载，请重试" description="暂时无法确认登录状态，请稍后重新加载。">
       <a href="/login" className="text-teal-800 underline">重新加载</a>
-    </AuthCard>;
+    </AuthCard></LayoutFailureNotice>;
   }
   // redirect throws internally, so keep it outside the database error handler.
   if (user) redirect("/");

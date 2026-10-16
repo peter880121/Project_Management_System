@@ -1,25 +1,26 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
 export function CreateProjectForm() {
   const router = useRouter();
+  const lock = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (lock.current) return;
     const form = event.currentTarget;
     const values = new FormData(form);
-    setBusy(true); setError("");
+    lock.current = true; setBusy(true); setError("");
     try {
       const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: values.get("name"), description: values.get("description") }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "创建失败");
-      form.reset(); router.push(`/projects/${result.data.id}/board`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "网络连接失败"); }
-    finally { setBusy(false); }
+      router.push(`/projects?created=${encodeURIComponent(result.data.id)}`); router.refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "网络连接失败，请核对项目列表后重试"); lock.current = false; setBusy(false); }
   }
   return <form onSubmit={submit} className="mt-6 space-y-3 rounded-xl border bg-white p-5">
     <h2 className="font-semibold">创建合成项目</h2>
