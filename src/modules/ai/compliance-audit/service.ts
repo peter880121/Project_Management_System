@@ -9,6 +9,8 @@ import { COMPLIANCE_AUDIT_SYSTEM_PROMPT } from "./prompt";
 import { complianceSummarySchema, type ComplianceAuditInput, type ComplianceAuditResult, type ComplianceSummary } from "./types";
 import { findTraceabilityIssues, RULE_VERSION } from "./rules";
 import { insertSummary, loadComplianceSnapshot, type ScanFilters } from "./repositories";
+import { loadAiTask } from "../task-context";
+import { ProjectError } from "@/modules/projects/services";
 export { findTraceabilityIssues } from "./rules";
 
 function parseSummary(raw: string, data: ComplianceAuditInput): ComplianceSummary {
@@ -44,6 +46,7 @@ async function invokeWithTimeout(model: BaseChatModel, input: string): Promise<s
   } finally { if (timer) clearTimeout(timer); }
 }
 export async function runComplianceAudit(input: ScanFilters & { actorId: string } & AuditRequestMetadata) {
+  await prisma.$transaction(tx => lockBusinessActor(tx, input.actorId, input.taskId ? ["ADMIN", "QA", "PM"] : ["ADMIN", "QA"], input.projectId));
   const scannedAt = new Date().toISOString();
   const { data, coverage } = await loadComplianceSnapshot(input);
   let modelName = "unavailable";
@@ -53,13 +56,17 @@ export async function runComplianceAudit(input: ScanFilters & { actorId: string 
     result = await summarizeCompliance(data, (prompt) => invokeWithTimeout(configured.model, prompt));
   } catch { result = await summarizeCompliance(data, async () => { throw new Error("LLM unavailable"); }); }
   const summaryId = randomUUID();
-  const filters = { projectId: input.projectId, actorId: input.actorFilter ?? null, from: input.from?.toISOString() ?? null, to: input.to?.toISOString() ?? null };
+  const filters = { projectId: input.projectId, taskId: input.taskId ?? null, actorId: input.actorFilter ?? null, from: input.from?.toISOString() ?? null, to: input.to?.toISOString() ?? null };
   const output = { ...result, model: modelName, coverage, scannedAt };
   // JSON round-trip converts snapshot dates for Prisma's JSON columns.
   const snapshot = JSON.parse(JSON.stringify({ filters, ruleVersion: RULE_VERSION, scannedAt, coverage, snapshot: data }));
   const jsonOutput = JSON.parse(JSON.stringify(output));
   await prisma.$transaction(async (tx) => {
-    await lockBusinessActor(tx, input.actorId, ["ADMIN", "QA"], input.projectId);
+    await lockBusinessActor(tx, input.actorId, input.taskId ? ["ADMIN", "QA", "PM"] : ["ADMIN", "QA"], input.projectId);
+    if (input.taskId) {
+      const current = await loadAiTask(input.projectId, input.taskId, "compliance", tx);
+      if (current.updatedAt.getTime() !== data.tasks[0]?.updatedAt.getTime()) throw new ProjectError("任务已更新，请重新检查证据", 409);
+    }
     await insertSummary(tx, { id: summaryId, projectId: input.projectId, type: "AUDIT_SUMMARY", status: "PENDING", input: snapshot, output: jsonOutput });
     await recordAudit(tx, { actorId: input.actorId, projectId: input.projectId, action: "AI_AUDIT_SUMMARY_GENERATED", entityType: "AuditSummary", entityId: summaryId, after: { filters, ruleVersion: RULE_VERSION, coverage, sourceAuditIds: data.auditLogs.map((row) => row.id), result: result.degraded ? "RULE_BASED_FALLBACK" : "AI_SUMMARY", status: "PENDING", findingCount: result.findings.length, summary: result.summary, model: modelName }, ip: input.ip, userAgent: input.userAgent });
   });

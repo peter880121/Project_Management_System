@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), create: vi.fn(), transaction: vi.fn(), audit: vi.fn(), rag: vi.fn(), configured: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), create: vi.fn(), transaction: vi.fn(), audit: vi.fn(), rag: vi.fn(), configured: vi.fn(), source: vi.fn() }));
+vi.mock("../task-context", () => ({ loadAiTask: mocks.source }));
 vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction } }));
 vi.mock("@/modules/auth/project-access", () => ({ lockBusinessActor: vi.fn() }));
 vi.mock("@/modules/audit/service", () => ({ recordAudit: mocks.audit, recordRagSearch: mocks.rag }));
@@ -15,6 +16,22 @@ describe("bounded WBS generation and failure diagnostics", () => {
     mocks.configured.mockReturnValue({ model: { invoke: mocks.invoke }, provider: "openai", modelName: "synthetic-chat" });
     mocks.create.mockImplementation(async ({ data }) => data);
     mocks.transaction.mockImplementation(async callback => callback({ aiSuggestion: { create: mocks.create } }));
+  });
+  it("persists source context only for 3–5 pending task suggestions", async () => {
+    const source = { id: "source-task", title: "蓝图确认", description: "Synthetic only", updatedAt: new Date(), requirement: null };
+    mocks.source.mockResolvedValue(source);
+    mocks.invoke.mockResolvedValue({ content: JSON.stringify({ tasks: Array.from({ length: 3 }, (_, index) => ({ title: `Synthetic ${index}`, description: "Synthetic evidence", estimateHours: 2, dependencies: [], suggestedRole: "PM" })) }) });
+    const result = await generateWbsSuggestions({ projectId: "synthetic-project", actorId: "synthetic-pm", request: "Synthetic refinement", sourceTaskId: source.id });
+    expect(result.suggestions).toHaveLength(3);
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PENDING", input: expect.objectContaining({ sourceTaskId: source.id, sourceTaskSnapshot: expect.objectContaining({ title: source.title }) }) }) }));
+  });
+  it("rejects out-of-range task refinement output after one correction", async () => {
+    mocks.source.mockResolvedValue({ id: "source-task", title: "调研", updatedAt: new Date(), requirement: null });
+    mocks.invoke.mockResolvedValue({ content: valid });
+    const result = await generateWbsSuggestions({ projectId: "synthetic-project", actorId: "synthetic-pm", request: "Synthetic refinement", sourceTaskId: "source-task" });
+    expect(result).toMatchObject({ manualFallback: true, failureCode: "MODEL_RESPONSE_INVALID", suggestions: [] });
+    expect(mocks.invoke).toHaveBeenCalledTimes(2);
+    expect(mocks.create).not.toHaveBeenCalled();
   });
   it("corrects invalid model output once and only persists pending suggestions", async () => {
     mocks.invoke.mockResolvedValueOnce({ content: '{"tasks":[{"estimateHours":"four hours"}]}' }).mockResolvedValueOnce({ content: valid });

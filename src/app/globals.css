@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+@media (prefers-reduced-motion: no-preference) {
+  .task-detail-drawer[open] { animation: task-drawer-enter 180ms ease-out; }
+  @keyframes task-drawer-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
+}
+
 :root {
   color-scheme: light;
   --background: #f6f8fb;

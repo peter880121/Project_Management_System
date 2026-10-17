@@ -209,6 +209,9 @@ export async function acceptWbsSuggestion(input: {
     const parsedOutput = acceptedWbsPayloadSchema.safeParse(suggestion.output);
     if (!parsedOutput.success) throw new BusinessError("WBS suggestion has an invalid task payload");
     const output = parsedOutput.data;
+    const provenance = suggestion.input && typeof suggestion.input === "object" && !Array.isArray(suggestion.input) ? suggestion.input.sourceTaskId : undefined;
+    const sourceTaskId = typeof provenance === "string" ? provenance : undefined;
+    if (sourceTaskId && !await tx.task.findFirst({ where: { id: sourceTaskId, projectId: suggestion.projectId }, select: { id: true } })) throw new BusinessError("来源任务已不存在", 409);
     const dependencySuggestions = output.dependencyIds.length === 0 ? [] : await tx.aiSuggestion.findMany({
       where: { id: { in: output.dependencyIds }, projectId: suggestion.projectId, type: "WBS" },
     });
@@ -248,7 +251,7 @@ export async function acceptWbsSuggestion(input: {
       action: "TASK_CREATED",
       entityType: "Task",
       entityId: task.id,
-      after: { title: task.title, status: task.status, estimateHours: task.estimateHours?.toString(), dependencies: dependencyTaskIds, aiSuggestionId: suggestion.id },
+      after: { title: task.title, status: task.status, estimateHours: task.estimateHours?.toString(), dependencies: dependencyTaskIds, aiSuggestionId: suggestion.id, ...(sourceTaskId ? { sourceTaskId } : {}) },
       ip: input.ip,
       userAgent: input.userAgent,
     });

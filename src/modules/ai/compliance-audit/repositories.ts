@@ -3,8 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { ProjectError } from "@/modules/projects/services";
 import type { ComplianceAuditInput } from "./types";
 import { lockProject } from "@/modules/auth/transaction-locks";
+import { loadAiTask } from "../task-context";
 
-export type ScanFilters = { projectId: string; actorFilter?: string; from?: Date; to?: Date };
+export type ScanFilters = { projectId: string; taskId?: string; actorFilter?: string; from?: Date; to?: Date };
 const PAGE_SIZE = 200;
 const CAP = 5000;
 async function pages<T extends { id: string }>(read: (cursor?: string) => Promise<T[]>) {
@@ -21,12 +22,16 @@ async function pages<T extends { id: string }>(read: (cursor?: string) => Promis
 export async function loadComplianceSnapshot(input: ScanFilters) {
   return prisma.$transaction(async (tx) => {
     if (!await tx.project.findUnique({ where: { id: input.projectId }, select: { id: true } })) throw new ProjectError("项目不存在", 404);
+    const source = input.taskId ? await loadAiTask(input.projectId, input.taskId, "compliance", tx) : null;
+    const requirementScope = source ? { id: { in: source.requirement ? [source.requirement.id] : [] } } : {};
+    const testScope = source ? { requirementId: { in: source.requirement ? [source.requirement.id] : [] } } : {};
     const cursorArgs = (cursor?: string) => ({ take: PAGE_SIZE, orderBy: { id: "asc" as const }, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
-    const tasks = await pages((cursor) => tx.task.findMany({ where: { projectId: input.projectId }, select: { id: true, status: true, requirementId: true, updatedAt: true, reviewedRequirementVersion: true }, ...cursorArgs(cursor) }));
-    const requirements = await pages((cursor) => tx.requirement.findMany({ where: { projectId: input.projectId }, select: { id: true, updatedAt: true, version: true, status: true }, ...cursorArgs(cursor) }));
-    const testCases = await pages((cursor) => tx.testCase.findMany({ where: { requirement: { projectId: input.projectId } }, select: { id: true, requirementId: true, status: true, reviewedRequirementVersion: true }, ...cursorArgs(cursor) }));
+    const tasks = await pages((cursor) => tx.task.findMany({ where: { projectId: input.projectId, ...(source ? { id: source.id } : {}) }, select: { id: true, status: true, requirementId: true, updatedAt: true, reviewedRequirementVersion: true }, ...cursorArgs(cursor) }));
+    const requirements = await pages((cursor) => tx.requirement.findMany({ where: { projectId: input.projectId, ...requirementScope }, select: { id: true, updatedAt: true, version: true, status: true }, ...cursorArgs(cursor) }));
+    const testCases = await pages((cursor) => tx.testCase.findMany({ where: { requirement: { projectId: input.projectId }, ...testScope }, select: { id: true, requirementId: true, status: true, reviewedRequirementVersion: true }, ...cursorArgs(cursor) }));
     const range = input.from || input.to ? { ...(input.from ? { gte: input.from } : {}), ...(input.to ? { lte: input.to } : {}) } : undefined;
-    const logs = await tx.auditLog.findMany({ where: { projectId: input.projectId, ...(input.actorFilter ? { actorId: input.actorFilter } : {}), ...(range ? { createdAt: range } : {}) }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 101, select: { id: true, action: true, entityType: true, entityId: true, createdAt: true, actorId: true, before: true, after: true } });
+    const recordIds = [...tasks.rows, ...requirements.rows, ...testCases.rows].map(row => row.id);
+    const logs = await tx.auditLog.findMany({ where: { projectId: input.projectId, ...(source ? { entityId: { in: recordIds } } : {}), ...(input.actorFilter ? { actorId: input.actorFilter } : {}), ...(range ? { createdAt: range } : {}) }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 101, select: { id: true, action: true, entityType: true, entityId: true, createdAt: true, actorId: true, before: true, after: true } });
     return {
       data: { tasks: tasks.rows, requirements: requirements.rows, testCases: testCases.rows, auditLogs: logs.slice(0, 100) } satisfies ComplianceAuditInput,
       coverage: { complete: tasks.complete && requirements.complete && testCases.complete, tasks: tasks.rows.length, requirements: requirements.rows.length, testCases: testCases.rows.length, auditLogs: Math.min(logs.length, 100), auditLogsTruncated: logs.length > 100, capPerEntity: CAP, semantics: "CURRENT_BUSINESS_SNAPSHOT_FILTERED_AUDIT_EVENTS" },

@@ -72,7 +72,9 @@ test("QA scans six gaps, reviews findings and summary, follows evidence, and rec
   const taskRow = page.locator("li").filter({ hasText: "Synthetic change task" });
   await expect(taskRow.getByText(/已过期/)).toBeVisible();
   await taskRow.getByLabel("版本复核说明", { exact: true }).fill("Task reviewed against synthetic version 2");
+  const versionReviewed = page.waitForResponse(response => response.request().method() === "POST" && response.url().includes(`/api/projects/${projectId}/compliance/requirement-reviews`));
   await taskRow.getByRole("button", { name: "确认适配当前需求版本", exact: true }).click();
+  expect((await versionReviewed).status()).toBe(200);
   await expect(taskRow.getByText("当前需求 v2 · 已复核版本：2", { exact: true })).toBeVisible();
   // A reviewed version emits an audit reference that can be opened outside a filtered list.
   await page.goto("/audit"); await page.getByLabel("选择审计项目", { exact: true }).selectOption(projectId);

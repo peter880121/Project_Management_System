@@ -14,11 +14,11 @@ type SuggestedTask = {
   history: { id: string; title: string; description: string | null; actualHours: number; deliveryDays: number }[];
 };
 
-export function WbsPanel({ projectId, onAccepted = async () => {} }: { projectId: string; onAccepted?: () => Promise<void> }) {
+export function WbsPanel({ projectId, sourceTaskId, initialRequest = "", onAccepted = async () => {}, onFeedback }: { projectId: string; sourceTaskId?: string; initialRequest?: string; onAccepted?: () => Promise<void>; onFeedback?: (message: string, kind: "success" | "error") => void }) {
   const reviewed = useRef(new Set<string>());
   const loadVersion = useRef(0);
   const [suggestions, setSuggestions] = useState<SuggestedTask[]>([]);
-  const [request, setRequest] = useState("");
+  const [request, setRequest] = useState(initialRequest);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -27,27 +27,29 @@ export function WbsPanel({ projectId, onAccepted = async () => {} }: { projectId
   const [manualFallback, setManualFallback] = useState(false);
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
-    const response = await fetch(`/api/projects/${projectId}/ai/wbs`, { cache: "no-store" });
+    const response = await fetch(`/api/projects/${projectId}/ai/wbs${sourceTaskId ? `?sourceTaskId=${encodeURIComponent(sourceTaskId)}` : ""}`, { cache: "no-store" });
     const payload = await response.json() as { data?: SuggestedTask[]; error?: string };
     if (!response.ok) throw new Error(payload.error || "无法读取 WBS 建议");
     if (version === loadVersion.current) setSuggestions(orderSuggestions((payload.data || []).filter(item => !reviewed.current.has(item.id))));
-  }, [projectId]);
+  }, [projectId, sourceTaskId]);
   useEffect(() => { void load().catch(() => setError("建议列表加载失败，请刷新重试。")); }, [load]);
 
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); setNotice(""); setManualFallback(false);
     try {
-      const response = await fetch(`/api/projects/${projectId}/ai/wbs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request, syntheticDataConfirmed: confirmed }) });
+      const response = await fetch(`/api/projects/${projectId}/ai/wbs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request, syntheticDataConfirmed: confirmed, ...(sourceTaskId ? { sourceTaskId } : {}) }) });
       const payload = await response.json() as { data?: SuggestedTask[]; manualFallback?: boolean; degraded?: boolean; message?: string; error?: string };
-      if (!response.ok) { setError(payload.error || "无法生成 WBS 建议"); return; }
+      if (!response.ok) { setError(payload.error || "无法生成 WBS 建议"); onFeedback?.(payload.error || "无法生成 WBS 建议", "error"); return; }
       setDegraded(Boolean(payload.degraded));
-      if (payload.manualFallback) { setManualFallback(true); setError(payload.message || "AI 生成失败，请重试或手动创建任务。"); return; }
+      if (payload.manualFallback) { setManualFallback(true); setError(payload.message || "AI 生成失败，请重试或手动创建任务。"); onFeedback?.(payload.message || "AI 生成失败，请重试或手动创建任务", "error"); return; }
       setRequest(""); setConfirmed(false); setDegraded(Boolean(payload.degraded)); ++loadVersion.current;
       setSuggestions((current) => orderSuggestions([...(payload.data || []), ...current].filter(item => !reviewed.current.has(item.id))));
       await load();
       setNotice(payload.message || "建议已生成并保存为待确认项目；正式任务尚未创建。");
+      onFeedback?.("AI 建议已生成，等待人工确认", "success");
     } catch {
       setError("AI 服务当前不可用，请稍后重试或手动创建任务。");
+      onFeedback?.("AI 服务当前不可用，请稍后重试", "error");
     } finally { setBusy(false); }
   }
 
@@ -56,15 +58,17 @@ export function WbsPanel({ projectId, onAccepted = async () => {} }: { projectId
     try {
       const response = await fetch(`/api/ai/wbs/${suggestionId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }) });
       const payload = await response.json() as { error?: string };
-      if (!response.ok) { setError(payload.error || "无法处理此建议"); return; }
+      if (!response.ok) { setError(payload.error || "无法处理此建议"); onFeedback?.(payload.error || "无法处理此建议", "error"); return; }
       reviewed.current.add(suggestionId); ++loadVersion.current;
       setSuggestions((current) => current.filter((item) => item.id !== suggestionId));
       setNotice(decision === "ACCEPTED" ? "已采纳此任务建议，并创建正式任务。" : "已拒绝此任务建议。");
+      if (decision === "REJECTED") onFeedback?.("已拒绝 AI 建议并记录审计", "success");
       try {
         await Promise.all([load(), ...(decision === "ACCEPTED" ? [onAccepted()] : [])]);
       } catch { setError("审阅决定已保存，但列表刷新失败，请重新加载页面查看最新任务。"); }
     } catch {
       setError("保存审阅决定失败，请刷新后查看建议状态。");
+      onFeedback?.("保存审阅决定失败，请刷新后核对状态", "error");
     } finally { setBusy(false); }
   }
 

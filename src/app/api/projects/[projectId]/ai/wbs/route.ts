@@ -10,6 +10,7 @@ import { containsLikelySensitiveInput, generateWbsSuggestions } from "@/modules/
 import { storedDocumentEvidence } from "@/modules/ai/wbs/types";
 import { dependencyIds, suggestionTitle } from "@/modules/ai/wbs/review-state";
 import { wbsFailureMessage } from "@/modules/ai/wbs/failure";
+import { projectErrorResponse } from "@/modules/projects/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,8 +27,10 @@ async function GETHandler(_request: Request, context: { params: Promise<{ projec
   if (denied) return denied;
   const { projectId } = await context.params;
   if (!z.uuid().safeParse(projectId).success) return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
+  const sourceTaskId = new URL(_request.url).searchParams.get("sourceTaskId");
+  if (sourceTaskId && !z.uuid().safeParse(sourceTaskId).success) return NextResponse.json({ error: "Invalid source task id" }, { status: 400 });
   const suggestions = await prisma.aiSuggestion.findMany({
-    where: { projectId, type: "WBS", status: "PENDING" },
+    where: { projectId, type: "WBS", status: "PENDING", ...(sourceTaskId ? { input: { path: "$.sourceTaskId", equals: sourceTaskId } } : {}) },
     select: { id: true, input: true, output: true, createdAt: true },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 90,
@@ -67,6 +70,7 @@ async function GETHandler(_request: Request, context: { params: Promise<{ projec
 }
 
 const generateSchema = z.object({
+  sourceTaskId: z.uuid().optional(),
   request: z.string().trim().min(10).max(8000),
   syntheticDataConfirmed: z.literal(true),
 }).strict();
@@ -84,7 +88,10 @@ async function POSTHandler(request: Request, context: { params: Promise<{ projec
   const parsed = generateSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Enter a requirement and confirm it contains synthetic data only", issues: parsed.error.issues }, { status: 400 });
   if (containsLikelySensitiveInput(parsed.data.request)) return NextResponse.json({ error: "Potential patient or contact identifiers found. Remove them and use synthetic data only." }, { status: 400 });
-  const result = await generateWbsSuggestions({ projectId, actorId: user!.id, request: parsed.data.request, ...getAuditRequestMetadata(request) });
+  let result: Awaited<ReturnType<typeof generateWbsSuggestions>>;
+  try {
+    result = await generateWbsSuggestions({ projectId, actorId: user!.id, request: parsed.data.request, sourceTaskId: parsed.data.sourceTaskId, ...getAuditRequestMetadata(request) });
+  } catch (error) { return projectErrorResponse(error); }
   return NextResponse.json({
     data: result.suggestions.map((suggestion) => ({ ...suggestion, history: result.historicalTasks, documentEvidence: result.documentEvidence })),
     degraded: result.degraded,

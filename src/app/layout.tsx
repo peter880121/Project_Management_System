@@ -3,6 +3,7 @@ import "./globals.css";
 import { AppHeader } from "@/components/app-header";
 import { AccountActionProvider } from "@/components/account-action-lock";
 import { BreadcrumbProvider } from "@/components/layout/breadcrumb-context";
+import { ToastProvider } from "@/components/toast-provider";
 
 export const metadata: Metadata = {
   title: "MedPM-AI",
@@ -10,5 +11,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="zh-CN"><body><AccountActionProvider><BreadcrumbProvider><AppHeader>{children}</AppHeader></BreadcrumbProvider></AccountActionProvider></body></html>;
+  return <html lang="zh-CN"><body><ToastProvider><AccountActionProvider><BreadcrumbProvider><AppHeader>{children}</AppHeader></BreadcrumbProvider></AccountActionProvider></ToastProvider></body></html>;
 }

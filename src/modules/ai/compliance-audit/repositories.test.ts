@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ transaction: vi.fn(), project: vi.fn(), tasks: vi.fn(), requirements: vi.fn(), cases: vi.fn(), logs: vi.fn() }));
+const mocks = vi.hoisted(() => ({ transaction: vi.fn(), project: vi.fn(), tasks: vi.fn(), requirements: vi.fn(), cases: vi.fn(), logs: vi.fn(), source: vi.fn() }));
+vi.mock("../task-context", () => ({ loadAiTask: mocks.source }));
 vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction } }));
 import { loadComplianceSnapshot } from "./repositories";
 const tx = { project: { findUnique: mocks.project }, task: { findMany: mocks.tasks }, requirement: { findMany: mocks.requirements }, testCase: { findMany: mocks.cases }, auditLog: { findMany: mocks.logs } };
@@ -30,5 +31,14 @@ describe("bounded compliance snapshots", () => {
     mocks.project.mockResolvedValue(null);
     await expect(loadComplianceSnapshot({ projectId: "missing" })).rejects.toMatchObject({ status: 404 });
     expect(mocks.tasks).not.toHaveBeenCalled();
+  });
+  it("restricts task scans at the database query boundary before model invocation", async () => {
+    mocks.source.mockResolvedValue({ id: "task", requirement: { id: "requirement" } });
+    mocks.tasks.mockResolvedValue([{ id: "task" }]); mocks.requirements.mockResolvedValue([{ id: "requirement" }]); mocks.cases.mockResolvedValue([{ id: "case" }]);
+    await loadComplianceSnapshot({ projectId: "project", taskId: "task" });
+    expect(mocks.tasks).toHaveBeenCalledWith(expect.objectContaining({ where: { projectId: "project", id: "task" } }));
+    expect(mocks.requirements).toHaveBeenCalledWith(expect.objectContaining({ where: { projectId: "project", id: { in: ["requirement"] } } }));
+    expect(mocks.cases).toHaveBeenCalledWith(expect.objectContaining({ where: { requirement: { projectId: "project" }, requirementId: { in: ["requirement"] } } }));
+    expect(mocks.logs).toHaveBeenCalledWith(expect.objectContaining({ where: { projectId: "project", entityId: { in: ["task", "requirement", "case"] } } }));
   });
 });

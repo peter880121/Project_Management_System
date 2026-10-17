@@ -24,6 +24,13 @@ describe("compliance API authorization and validation", () => {
     expect((await scan(request({ projectId: id }))).status).toBe(200);
     expect((await list(request({}))).status).toBe(200);
   });
+  it("permits PM only in task scope, never project scope or formal review", async () => {
+    mocks.actor.mockResolvedValue({ id, role: "PM" });
+    expect((await scan(request({ projectId: id, taskId: id }))).status).toBe(200);
+    expect(mocks.scan).toHaveBeenCalledWith(expect.objectContaining({ taskId: id, actorId: id }));
+    expect((await scan(request({ projectId: id, taskId: id, actorId: id }))).status).toBe(403);
+    expect((await scan(request({ projectId: id }))).status).toBe(403);
+  });
   it.each(["PM", "MEMBER", "ADMIN"])("denies %s summary and version/finding review", async (role) => {
     mocks.actor.mockResolvedValue({ id, role });
     expect((await decide(request({ decision: "ACCEPTED", note: "Synthetic" }), { params: Promise.resolve({ suggestionId: id }) })).status).toBe(403);
