@@ -161,3 +161,47 @@ corepack pnpm test:e2e --workers=1
 ## Review 边界
 
 本批页面实现及结果整理已完成，等待统一 Review。全量验收仍有失败和未执行项；需要后续排查运行时响应、document/risk 后台处理以及旧测试定位/导航时序。未提前进入步骤 3，未删除返回按钮。
+
+## 后续 E2E 整改（2026-10-16）
+
+- 用户状态变更已解决：确认操作等待 PATCH 响应后，用户管理 11 项补测全部通过，保留原权限、状态与审计断言，不列入 known-issues。
+- worker 依赖 4 项逐条 skip 并注明恢复条件；授权导出仅将 li 成员定位替换为 table/row，原授权、导出与撤权断言不变，不列入 known-issues。
+- ADMIN 和追溯补充条件等待；密码测试等待方法从误写的 POST 修正为接口实际使用的 PATCH。没有新增硬等待、没有改变统一超时或生产代码。
+- 本批最终检查、全量结果与提交见下方完成记录（运行后补齐）。
+
+### 本次整改范围与超时说明
+
+本节是后续整改记录，上文保留批次 B 的原始失败证据。授权导出的变更仅限成员 locator，原断言内容未修改。全量新暴露的注册响应、合规复核响应、通知页跳转也补充了条件等待；没有增加 skip。
+
+只有两种长流程增加整体时间预算：角色导航旅程（首页、多个项目子页、审计、截图）与任务交付旅程（创建、分配、状态更新、详情导航）由默认 30 秒设为 90 秒。整改首轮分别在 page.goto 成员页/任务详情时耗尽整项预算，条件等待本身无法突破这个总上限；全局 timeout、原业务断言和其他测试预算不变。没有 waitForTimeout。
+
+认证后段还适配了已移动到主导航的登出错误提示定位，以及 URL 编码后的 next 语义校验，原错误文案、Cookie 重放、会话失效、安全与审计断言保留。
+
+实际涉及 12 个文件：
+
+1. `e2e/document-parsing.spec.ts`
+2. `e2e/document-rag.spec.ts`
+3. `e2e/risk-scheduler.spec.ts`
+4. `e2e/project-access-exports.spec.ts`
+5. `e2e/acceptance-ui.spec.ts`
+6. `e2e/auth.spec.ts`
+7. `e2e/traceability.spec.ts`
+8. `e2e/layout-topbar.spec.ts`
+9. `e2e/compliance.spec.ts`
+10. `e2e/tasks.spec.ts`
+11. `docs/known-issues.md`
+12. `docs/layout-step2b-review.md`
+
+比最初预计的 9 个多 3 个测试文件（layout-topbar、compliance、tasks），用于处理全量实际捕获的条件等待和长旅程总预算问题。没有生产代码、API、数据库结构、依赖或 Playwright 配置变更。
+
+### 续验记录（2026-10-17）
+
+- lint、typecheck、单元测试全部通过：62 个文件、385 项测试。
+- 上轮日志 `e2e-remediation-final.log` 为 54 通过、4 失败、4 跳过、10 未执行；失败涉及合规版本复核、容量风险、追溯整项超时和访客跳转。
+- 本次先定向执行 compliance、planning、traceability、users，14 项全部通过，未修改代码。
+- 随后串行执行 `ACCEPTANCE_EDGE=1 pnpm test:e2e --workers=1 --output=test-results/continuation-full`，72 项均有状态：66 通过、2 失败、4 项既有 worker 跳过，无未执行项。上轮四项失败本次定向和全量均通过，但不据此认定历史时序问题根因消失。
+- 文档上传 API 返回 503，页面提示上传未完成；成功提示断言失败，QA 下载与后续审计验证未执行到。
+- 授权导出的成员表格定位与授权阶段通过，导出 API 返回 503；下载事件未产生，120 秒整项预算耗尽，后续下载与撤权验证未执行到。
+- 两轮均在全部用例完成后停留于服务退出阶段，手动中断收尾；上述计数来自逐项结果，不代表进程正常退出。全量日志为本地忽略文件 `continuation-full.log`，失败 trace 位于 `test-results/continuation-full/`。
+- 503 的底层原因尚未确认，未增加 skip、放宽超时或改动业务代码。恢复上传与导出后仍需完整验收。
+- 本次只补充本文件及 known-issues；无数据库迁移、依赖、环境变量或向量初始化变更。审计与 AI 人工确认逻辑不变，未提交或合并。建议提交信息：`test(e2e): stabilize workflow waits and document acceptance gaps`。

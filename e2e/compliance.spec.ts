@@ -45,14 +45,20 @@ test("QA scans six gaps, reviews findings and summary, follows evidence, and rec
   for (const code of ["TASK_WITHOUT_REQUIREMENT", "APPROVED_REQUIREMENT_WITHOUT_TASK", "REQUIREMENT_WITHOUT_TEST", "DONE_TASK_WITH_UNPASSED_TEST", "TASK_REQUIREMENT_REVIEW_STALE", "TEST_REQUIREMENT_REVIEW_STALE"]) await expect(panel.getByRole("heading", { name: code, exact: true }).first()).toBeVisible();
   const finding = panel.locator("article").filter({ has: page.getByRole("heading", { name: "TASK_WITHOUT_REQUIREMENT", exact: true }) });
   await finding.getByLabel("问题复核说明", { exact: true }).fill("Confirmed synthetic missing requirement; PM to correct.");
+  const findingReviewed = page.waitForResponse(response => response.request().method() === "POST" && /^\/api\/audit\/summaries\/[^/]+\/findings\/[^/]+\/review$/.test(new URL(response.url()).pathname));
   await finding.getByRole("button", { name: "提交问题复核", exact: true }).click();
+  expect((await findingReviewed).status()).toBe(201);
   await expect(finding.getByText(/CONFIRMED/)).toBeVisible();
   await panel.getByLabel("摘要复核说明", { exact: true }).fill("Reviewed synthetic snapshot; acceptance does not approve release.");
+  const summaryReviewed = page.waitForResponse(response => response.request().method() === "PATCH" && /^\/api\/audit\/summaries\/[^/]+$/.test(new URL(response.url()).pathname));
   await panel.getByRole("button", { name: "提交摘要复核", exact: true }).click();
+  expect((await summaryReviewed).status()).toBe(200);
   await expect(panel.getByRole("heading", { name: "合规审计摘要 · ACCEPTED", exact: true })).toBeVisible();
   await page.reload(); await page.getByLabel("选择审计项目", { exact: true }).selectOption(projectId);
   await page.getByRole("button", { name: "查询历史摘要", exact: true }).click();
+  const summaryLoaded = page.waitForResponse(response => response.request().method() === "GET" && /^\/api\/audit\/summaries\/[^/]+$/.test(new URL(response.url()).pathname));
   await page.getByRole("button", { name: /ACCEPTED/ }).click();
+  expect((await summaryLoaded).status()).toBe(200);
   await expect(page.getByText("Confirmed synthetic missing requirement; PM to correct.", { exact: false })).toBeVisible();
 
   const pm = await browser.newContext({ baseURL: new URL(page.url()).origin });

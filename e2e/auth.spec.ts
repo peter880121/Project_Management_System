@@ -70,6 +70,7 @@ test("login succeeds and loads home without storing the password", async ({ page
   await fill(page, "home");
   await expectNoStoredPassword(page);
   await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.waitForURL(/\/$/);
   await expect(page).toHaveURL(/\/$/);
   expect((await page.request.get("/api/auth/me")).status()).toBe(200);
   await expectNoStoredPassword(page);
@@ -79,6 +80,7 @@ test("login returns to a safe next target", async ({ page }) => {
   await page.goto("/login?next=" + encodeURIComponent("/?source=auth"));
   await fill(page, "next");
   await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.waitForURL(/\/\?source=auth$/);
   await expect(page).toHaveURL(/\/\?source=auth$/);
 });
 
@@ -86,6 +88,7 @@ test("unsafe next falls back home", async ({ page }) => {
   await page.goto("/login?next=" + encodeURIComponent("//evil.com"));
   await fill(page, "unsafe");
   await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.waitForURL(/\/$/);
   await expect(page).toHaveURL(/\/$/);
 });
 
@@ -93,6 +96,7 @@ test("already authenticated users ignore next and go home", async ({ page }) => 
   const response = await page.request.post("/api/auth/login", { data: { email: account("authenticated").email, password } });
   expect(response.ok()).toBe(true);
   await page.goto("/login?next=" + encodeURIComponent("/?source=ignored"));
+  await page.waitForURL(/\/$/);
   await expect(page).toHaveURL(/\/$/);
 });
 
@@ -143,6 +147,7 @@ test("pending submission cannot send duplicate requests", async ({ page }) => {
   } finally {
     release();
   }
+  await page.waitForURL(/\/$/);
   await expect(page).toHaveURL(/\/$/);
 });
 
@@ -183,10 +188,12 @@ test("registration omits empty invite, creates PENDING and stays on the result p
   await fillRegistration(page, email);
   await expectNoStoredPassword(page);
   const requestPromise = page.waitForRequest("**/api/auth/register");
+  const registrationResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/auth/register" && response.request().method() === "POST");
   await page.getByRole("button", { name: "注册", exact: true }).click();
   const payload = (await requestPromise).postDataJSON();
   expect(payload).not.toHaveProperty("inviteCode");
   expect(payload).not.toHaveProperty("confirmPassword");
+  expect((await registrationResponse).status()).toBe(201);
   await expect(page.getByRole("status")).toHaveText("注册成功，等待管理员激活");
   await expect(page.locator("form")).toHaveCount(0);
   await expect(page).toHaveURL(/\/register\?next=\/profile$/);
@@ -205,8 +212,10 @@ test("valid invite creates ACTIVE without logging in or redirecting", async ({ p
   await fillRegistration(page, email);
   await page.getByLabel("邀请码（可选）", { exact: true }).fill(` ${inviteCode} `);
   const requestPromise = page.waitForRequest("**/api/auth/register");
+  const registrationResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/auth/register" && response.request().method() === "POST");
   await page.getByRole("button", { name: "注册", exact: true }).click();
   expect((await requestPromise).postDataJSON().inviteCode).toBe(inviteCode);
+  expect((await registrationResponse).status()).toBe(201);
   await expect(page.getByRole("status")).toHaveText("注册成功，请登录");
   await expect(page.locator("form")).toHaveCount(0);
   await expect(page).toHaveURL(/\/register$/);
@@ -341,7 +350,7 @@ test("profile shows account information and validates password fields", async ({
   await expect(page.getByText("两次输入的密码不一致", { exact: true })).toBeVisible();
   await page.getByLabel("确认新密码", { exact: true }).fill(newPassword);
   await page.getByLabel("当前密码", { exact: true }).fill(`${password}-wrong`);
-  const invalidPasswordResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/users/me/password" && response.request().method() === "POST");
+  const invalidPasswordResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/users/me/password" && response.request().method() === "PATCH");
   await page.getByRole("button", { name: "修改密码", exact: true }).click();
   expect((await invalidPasswordResponse).status()).toBe(400);
   await expect(page.locator("#currentPassword-error")).toHaveText("当前密码不正确");
@@ -371,8 +380,10 @@ test("changing password keeps context A authenticated and rejects context B's ca
     const newPassword = `${randomBytes(18).toString("hex")}Aa1`;
     await fillPasswordChange(pageA, newPassword);
     const changeRequest = pageA.waitForRequest("**/api/users/me/password");
+    const changeResponse = pageA.waitForResponse(response => new URL(response.url()).pathname === "/api/users/me/password" && response.request().method() === "PATCH");
     await pageA.getByRole("button", { name: "修改密码", exact: true }).click();
     expect((await changeRequest).postDataJSON()).not.toHaveProperty("confirmPassword");
+    expect((await changeResponse).status()).toBe(200);
     await expect(pageA.getByRole("status")).toHaveText("密码已更新，当前设备保持登录，其他设备需要重新登录");
     await expect(pageA).toHaveURL(/\/profile$/);
     for (const label of ["当前密码", "新密码", "确认新密码"]) await expect(pageA.getByLabel(label, { exact: true })).toHaveValue("");
@@ -383,7 +394,7 @@ test("changing password keeps context A authenticated and rejects context B's ca
     // Explicit replay of the captured credential proves server invalidation, not local deletion.
     expect((await b.request.get("/api/auth/me", { headers: { cookie: oldCookieHeaderB } })).status()).toBe(401);
     await pageB.reload();
-    await expect(pageB).toHaveURL(/\/login\?next=\/profile$/);
+    await expect(pageB).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("next") === "/profile");
     await pageA.reload();
     await expect(pageA.getByRole("heading", { name: "个人资料", exact: true })).toBeVisible();
     const storage = await pageA.evaluate(() => ({ ls: JSON.stringify(localStorage), ss: JSON.stringify(sessionStorage), url: location.href }));
@@ -396,22 +407,24 @@ test("changing password keeps context A authenticated and rejects context B's ca
 test("logout goes to login and protected profile cannot be reopened", async ({ page }) => {
   await loginForProfile(page, "logout");
   await page.getByRole("button", { name: "登出", exact: true }).click();
+  await page.waitForURL(/\/login$/);
   await expect(page).toHaveURL(/\/login$/);
   expect((await page.request.get("/api/auth/me")).status()).toBe(401);
   await page.goto("/profile");
-  await expect(page).toHaveURL(/\/login\?next=\/profile$/);
+  await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("next") === "/profile");
 });
 
 test("failed logout stays on profile and permits retry", async ({ page }) => {
   await loginForProfile(page, "logout-failure");
   await page.route("**/api/auth/logout", (route) => route.fulfill({ status: 500, json: { error: "登出失败，请重试" } }));
   await page.getByRole("button", { name: "登出", exact: true }).click();
-  await expect(page.getByRole("region", { name: "登出账号", exact: true }).getByRole("alert")).toHaveText("登出失败，请重试");
+  await expect(page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("alert")).toHaveText("登出失败，请重试");
   await expect(page).toHaveURL(/\/profile$/);
   expect((await page.request.get("/api/auth/me")).status()).toBe(200);
   await expect(page.getByRole("button", { name: "登出", exact: true })).toBeEnabled();
   await page.unroute("**/api/auth/logout");
   await page.getByRole("button", { name: "登出", exact: true }).click();
+  await page.waitForURL(/\/login$/);
   await expect(page).toHaveURL(/\/login$/);
 });
 
@@ -427,13 +440,15 @@ test("expired profile session clears password inputs and offers login", async ({
   await expect(page.locator("form").getByRole("alert")).toHaveText("当前会话已失效，请重新登录后重试");
   for (const label of ["当前密码", "新密码", "确认新密码"]) await expect(page.getByLabel(label, { exact: true })).toHaveValue("");
   await page.getByRole("link", { name: "重新登录", exact: true }).click();
-  await expect(page).toHaveURL(/\/login\?next=\/profile$/);
+  await page.waitForURL(url => url.pathname === "/login" && url.searchParams.get("next") === "/profile");
+  await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("next") === "/profile");
 });
 
 test("logout with an already invalid session still takes the user to login", async ({ page }) => {
   await loginForProfile(page, "logout-expired");
   await revokeAccountSessions("logout-expired");
   await page.getByRole("button", { name: "登出", exact: true }).click();
+  await page.waitForURL(/\/login$/);
   await expect(page).toHaveURL(/\/login$/);
 });
 

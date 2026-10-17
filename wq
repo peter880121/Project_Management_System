@@ -1,0 +1,68 @@
+warning: in the working copy of 'e2e/planning.spec.ts', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'e2e/risk-scheduler.spec.ts', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/api/projects/[projectId]/ai/wbs/route.ts', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/api/tasks/[taskId]/schedule/route.ts', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/audit/viewer.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/notifications/[id]/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/notifications/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/page.test.ts', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/profile/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/board/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/board/risk-panel.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/board/task-board.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/board/wbs-panel.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/documents/chunks/[chunkId]/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/documents/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/members/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/planning/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/planning/planning-panel.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/traceability/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/projects/[projectId]/traceability/traceability-manager.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/tasks/[taskId]/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/app/users/page.tsx', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'src/modules/audit/service.ts', CRLF will be replaced by LF the next time Git touches it
+ e2e/compliance.spec.ts                             |  6 [32m+[m[31m--[m
+ e2e/planning.spec.ts                               |  2 [32m+[m[31m-[m
+ e2e/risk-scheduler.spec.ts                         |  2 [32m+[m[31m-[m
+ e2e/tasks.spec.ts                                  |  3 [32m+[m[31m-[m
+ e2e/traceability.spec.ts                           |  2 [32m+[m
+ src/app/api/projects/[projectId]/ai/wbs/route.ts   | 15 [32m+++++[m[31m-[m
+ src/app/api/tasks/[taskId]/schedule/route.ts       |  5 [32m+[m[31m-[m
+ src/app/audit/page.tsx                             |  8 [32m+++[m[31m-[m
+ src/app/audit/viewer.tsx                           | 11 [32m+++[m[31m--[m
+ src/app/globals.css                                | 41 [32m++++++++++++++++[m
+ src/app/layout.tsx                                 |  5 [32m+[m[31m-[m
+ src/app/login/page.tsx                             |  5 [32m+[m[31m-[m
+ src/app/notifications/[id]/page.tsx                |  2 [32m+[m[31m-[m
+ src/app/notifications/page.tsx                     |  2 [32m+[m[31m-[m
+ src/app/page.test.ts                               | 38 [32m++++[m[31m-----------[m
+ src/app/page.tsx                                   | 16 [32m++[m[31m-----[m
+ src/app/profile/account-actions.tsx                | 15 [32m++[m[31m----[m
+ src/app/profile/logout-button.tsx                  |  6 [32m+[m[31m--[m
+ src/app/profile/page.test.ts                       |  3 [32m+[m[31m-[m
+ src/app/profile/page.tsx                           |  8 [32m++[m[31m--[m
+ src/app/projects/[projectId]/board/page.tsx        |  8 [32m++[m[31m--[m
+ src/app/projects/[projectId]/board/risk-panel.tsx  |  4 [32m+[m[31m-[m
+ src/app/projects/[projectId]/board/task-board.tsx  | 27 [32m++++[m[31m-------[m
+ src/app/projects/[projectId]/board/wbs-panel.tsx   | 50 [32m+++++++++++++[m[31m-------[m
+ .../documents/chunks/[chunkId]/page.tsx            |  2 [32m+[m[31m-[m
+ src/app/projects/[projectId]/documents/page.tsx    |  2 [32m+[m[31m-[m
+ .../projects/[projectId]/members/members-panel.tsx | 55 [32m+++++++++++++++++++++[m[31m-[m
+ src/app/projects/[projectId]/members/page.tsx      |  9 [32m+++[m[31m-[m
+ src/app/projects/[projectId]/planning/page.tsx     |  2 [32m+[m[31m-[m
+ .../[projectId]/planning/planning-panel.tsx        | 16 [32m++++[m[31m---[m
+ src/app/projects/[projectId]/traceability/page.tsx |  2 [32m+[m[31m-[m
+ .../traceability/traceability-manager.tsx          | 43 [32m+++++++++++++[m[31m----[m
+ src/app/projects/create-project-form.tsx           | 11 [32m+++[m[31m--[m
+ src/app/projects/page.tsx                          | 35 [32m++++++++[m[31m------[m
+ src/app/register/page.tsx                          |  5 [32m+[m[31m-[m
+ src/app/tasks/[taskId]/page.tsx                    |  7 [32m++[m[31m-[m
+ src/app/users/page.tsx                             | 10 [32m++[m[31m--[m
+ src/components/app-navigation.tsx                  | 13 [31m-----[m
+ src/modules/ai/chat-model.ts                       |  4 [32m+[m[31m-[m
+ src/modules/ai/provider-config.test.ts             |  2 [32m+[m
+ src/modules/ai/wbs/prompt.ts                       |  2 [32m+[m
+ src/modules/ai/wbs/service.ts                      | 42 [32m++++++++++[m[31m-------[m
+ src/modules/audit/service.ts                       | 11 [32m+++[m[31m--[m
+ 43 files changed, 354 insertions(+), 203 deletions(-)

@@ -30,9 +30,13 @@ test("PM creates project and traceability; QA records a test result with audit p
   const projectName = `Synthetic traceability ${runId}`;
   await page.getByLabel("项目名称", { exact: true }).fill(projectName);
   await page.getByLabel("项目描述", { exact: true }).fill("Synthetic release acceptance");
+  const projectCreated = page.waitForResponse(response => new URL(response.url()).pathname === "/api/projects" && response.request().method() === "POST");
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
+  expect((await projectCreated).status()).toBe(201);
+  await page.waitForURL(url => url.pathname === "/projects" && url.searchParams.has("created"));
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
   await page.getByRole("heading", { name: projectName, exact: true }).getByRole("link").click();
+  await page.waitForURL(url => /^\/projects\/[0-9a-f-]{36}\/board$/.test(url.pathname));
   const projectId = page.url().split("/").at(-2)!;
   const qa = await db.user.findUniqueOrThrow({ where: { email: emails[1] } });
   expect((await page.request.put(`/api/projects/${projectId}/members`, { data: { userId: qa.id, active: true, expectedVersion: 0 } })).status()).toBe(200);

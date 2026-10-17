@@ -22,7 +22,8 @@ test("owner grants QA access, QA downloads audited CSV/JSON, and revocation bloc
   test.setTimeout(120000);
   expect((await page.request.post("/api/auth/login", { data: { email: emails[0], password } })).status()).toBe(200);
   await page.goto(`/projects/${projectId}/members`); await page.getByLabel("待添加成员").selectOption(qaId); await page.getByRole("button", { name: "添加成员", exact: true }).click();
-  await expect(page.locator("li").filter({ hasText: "Synthetic export 1 · QA" })).toBeVisible();
+  const memberRow = page.getByRole("table", { name: "项目成员列表", exact: true }).getByRole("row").filter({ has: page.getByRole("rowheader", { name: "Synthetic export 1", exact: true }) }).filter({ has: page.getByRole("cell", { name: "QA", exact: true }) });
+  await expect(memberRow).toBeVisible();
   const qa = await browser.newContext({ baseURL: new URL(page.url()).origin }); const qaPage = await qa.newPage();
   try {
     expect((await qa.request.post("/api/auth/login", { data: { email: emails[1], password } })).status()).toBe(200);
@@ -36,7 +37,7 @@ test("owner grants QA access, QA downloads audited CSV/JSON, and revocation bloc
       const artifact = await db.complianceExport.findFirstOrThrow({ where: { projectId, format } }); expect(artifact.status).toBe("AVAILABLE"); expect(artifact.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
       expect(await db.auditLog.count({ where: { actorId: qaId, entityId: artifact.id, action: "DATA_EXPORTED" } })).toBe(1);
     }
-    await page.reload(); await page.getByRole("button", { name: "移出", exact: true }).click(); await expect(page.locator("li").filter({ hasText: "Synthetic export 1 · QA" })).toHaveCount(0);
+    await page.reload(); await page.getByRole("button", { name: "移出", exact: true }).click(); await expect(memberRow).toHaveCount(0);
     const artifact = await db.complianceExport.findFirstOrThrow({ where: { projectId } });
     for (const url of [`/api/projects/${projectId}/exports`, `/api/exports/${artifact.id}/download`, `/api/tasks/${taskId}`]) expect((await qa.request.get(url)).status()).toBe(403);
     expect((await qa.request.get(`/projects/${projectId}/exports`)).status()).toBe(404);

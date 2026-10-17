@@ -233,5 +233,6 @@ test("batch B private notifications show a static parent and clean it on navigat
   await crumbs.getByRole("link", { name: "我的风险通知", exact: true }).click();
   await expect(crumbs.locator("li")).toHaveText(["我的风险通知"]);
   await page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { name: "项目", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/projects");
   await expect(crumbs.locator("li")).toHaveText(["项目"]);
 });

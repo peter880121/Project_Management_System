@@ -20,6 +20,8 @@ test.beforeEach(async ({ page, baseURL }) => {
 });
 
 test("PM creates a task, changes its status, and reviews requirement and audit history", async ({ page }) => {
+  // Creation, assignment, state change and detail navigation exhausted 30s before page.goto completed.
+  test.setTimeout(90_000);
   const title = `E2E task ${Date.now()}`;
   await page.goto(`/projects/${projectId}/board`);
   await expect(page.getByRole("heading", { name: "Atlas Release Readiness" })).toBeVisible();

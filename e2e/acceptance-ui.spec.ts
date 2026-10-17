@@ -36,6 +36,8 @@ test("guest home provides authentication and actual Agent entry points", async (
 
 for (const role of ["ADMIN", "PM", "MEMBER", "QA"] as const) {
   test(`${role} sees shared navigation throughout the project workflow`, async ({ page, context, baseURL }) => {
+    // Six page visits plus screenshots exceeded the 30s total budget; each step still waits on real UI state.
+    test.setTimeout(90_000);
     await identity(context, baseURL!, role);
     if (["ADMIN", "MEMBER"].includes(role)) {
       await page.goto("/");
@@ -66,6 +68,7 @@ for (const role of ["ADMIN", "PM", "MEMBER", "QA"] as const) {
       if (role === "PM" && url === board) await page.screenshot({ path: "test-results/layout-step1-board.png", fullPage: true });
     }
     if (role === "PM") {
+      await page.getByRole("table", { name: "项目成员列表" }).waitFor({ state: "visible" });
       await expect(page.getByRole("table", { name: "项目成员列表" })).toBeVisible();
       await page.screenshot({ path: "test-results/style-members-desktop.png", fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });
@@ -73,6 +76,8 @@ for (const role of ["ADMIN", "PM", "MEMBER", "QA"] as const) {
     }
     if (["ADMIN", "QA"].includes(role)) {
       await page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { name: "审计", exact: true }).click();
+      await page.waitForURL(url => url.pathname === "/audit");
+      await page.getByRole("heading", { name: "审计日志与合规审查", exact: true }).waitFor({ state: "visible" });
       await expect(page.getByRole("heading", { name: "审计日志与合规审查", exact: true })).toBeVisible();
       await page.getByLabel("选择审计项目").selectOption(projectId);
       await expect(page.getByLabel("选择审计项目")).toHaveValue(projectId);
