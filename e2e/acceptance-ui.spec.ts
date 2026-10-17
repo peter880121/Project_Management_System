@@ -18,21 +18,48 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("guest home provides authentication and actual Agent entry points", async ({ page }) => {
+test("guest landing presents three informational capabilities and working authentication links", async ({ page }) => {
   await page.goto("/");
-  const nav = page.getByRole("navigation", { name: "主导航", exact: true });
+  const nav = page.getByRole("navigation", { name: "产品导航", exact: true });
+  await expect(page.getByRole("navigation", { name: "主导航", exact: true })).toHaveCount(0);
   await expect(nav.getByRole("link", { name: "登录", exact: true })).toBeVisible();
-  await expect(nav.getByRole("link", { name: "注册账号" })).toBeVisible();
-  await expect(page.getByText("待接入", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "选择项目，使用 WBS" })).toHaveAttribute("href", "/projects");
-  await page.screenshot({ path: "test-results/acceptance-home.png", fullPage: true });
+  await expect(nav.getByRole("link", { name: "注册体验" })).toHaveAttribute("href", "/register");
+  const capabilities = page.getByRole("region", { name: "三个 Agent，贯穿交付关键环节", exact: true });
+  await expect(capabilities.getByRole("article")).toHaveCount(3);
+  for (const title of ["智能 WBS 与工期预估", "合规审计追踪", "资源冲突与风险预警"]) await expect(capabilities.getByRole("heading", { name: title, exact: true })).toBeVisible();
+  await expect(capabilities.getByRole("button")).toHaveCount(0);
+  await expect(capabilities.getByRole("link")).toHaveCount(0);
+  await page.screenshot({ path: "test-results/landing-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(nav).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/landing-narrow.png", fullPage: true });
+  await page.getByRole("link", { name: "登录，开启智能交付", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/login");
   for (const path of ["/login", "/register"]) {
     await page.goto(path);
     await expect(page.getByRole("complementary", { name: "全局侧边栏", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("navigation", { name: "主导航", exact: true })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "产品导航", exact: true })).toHaveCount(0);
   }
+  await page.goto("/");
+  await page.getByRole("link", { name: "注册体验", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/register");
   await page.goto("/projects");
   await expect(page).toHaveURL(/\/login\?next=/);
 });
+
+for (const role of ["ADMIN", "PM", "MEMBER", "QA"] as const) {
+  test(`authenticated ${role} home retains the workbench and never renders landing`, async ({ page, context, baseURL }) => {
+    await identity(context, baseURL!, role);
+    await page.goto("/");
+    await expect(page.getByRole("navigation", { name: "产品导航", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "让医疗软件交付更可追溯，也更可控。", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "打开任务看板", exact: true })).toHaveAttribute("href", "/projects");
+    await expect(page.getByRole("complementary", { name: "全局侧边栏", exact: true })).toBeVisible();
+    if (role === "ADMIN") await page.screenshot({ path: "test-results/landing-authenticated-workbench.png", fullPage: true });
+  });
+}
 
 for (const role of ["ADMIN", "PM", "MEMBER", "QA"] as const) {
   test(`${role} sees shared navigation throughout the project workflow`, async ({ page, context, baseURL }) => {

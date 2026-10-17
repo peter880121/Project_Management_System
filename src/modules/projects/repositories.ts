@@ -6,6 +6,8 @@ export const findRequirement = (tx: Prisma.TransactionClient, projectId: string,
 export const findTestCase = (tx: Prisma.TransactionClient, projectId: string, id: string) => tx.testCase.findFirst({ where: { id, requirement: { projectId } } });
 export const findTask = (tx: Prisma.TransactionClient, projectId: string, id: string) => tx.task.findFirst({ where: { id, projectId } });
 export const insertProject = (tx: Prisma.TransactionClient, data: Prisma.ProjectUncheckedCreateInput) => tx.project.create({ data });
+export const insertProjectTasks = (tx: Prisma.TransactionClient, data: Prisma.TaskCreateManyInput[]) => tx.task.createMany({ data });
+export const insertProjectTaskDependencies = (tx: Prisma.TransactionClient, data: Prisma.TaskDependencyCreateManyInput[]) => tx.taskDependency.createMany({ data });
 export const insertRequirement = (tx: Prisma.TransactionClient, data: Prisma.RequirementUncheckedCreateInput) => tx.requirement.create({ data });
 export const insertTestCase = (tx: Prisma.TransactionClient, data: Prisma.TestCaseUncheckedCreateInput) => tx.testCase.create({ data });
 export const updateRequirement = (tx: Prisma.TransactionClient, args: Prisma.RequirementUpdateManyArgs) => tx.requirement.updateMany(args);

@@ -14,7 +14,7 @@ describe("project creation", () => {
   it("trims PM input and rejects unknown fields", async () => {
     mocks.actor.mockResolvedValue({ id: "actor", role: "PM" }); mocks.create.mockResolvedValue({ id: "project" });
     expect((await POST(request({ name: " Synthetic " }))).status).toBe(201);
-    expect(mocks.create).toHaveBeenCalledWith({ name: "Synthetic", description: "" }, expect.objectContaining({ actorId: "actor" }));
+    expect(mocks.create).toHaveBeenCalledWith({ name: "Synthetic", description: "", initializeStandardTasks: true }, expect.objectContaining({ actorId: "actor" }));
     expect((await POST(request({ name: " " }))).status).toBe(400);
     expect((await POST(request({ name: "Synthetic", ownerId: "other" }))).status).toBe(400);
   });

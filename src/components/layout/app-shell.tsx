@@ -63,7 +63,7 @@ export function AppShell({ user, unavailable = false, children }: { user: Layout
   return <LayoutFailureContext.Provider value={{ failed: routeFailed, setFailed: setRouteFailed }}>
     {unavailable ? <LayoutUnavailable /> : redirecting ? <p role="status" className="p-8 text-slate-600">正在前往登录页…</p> : <>
       {showSidebar && <AppSidebar user={user!} pathname={pathname} open={open} onNavigate={() => close()} onClose={() => close(true)} panelRef={panel} />}
-      {!user && !routeFailed && <nav aria-label="主导航" className="mx-auto flex max-w-7xl flex-wrap gap-3 px-6 py-6"><Link href="/">首页</Link><Link href="/login">登录</Link><Link href="/register">注册账号</Link></nav>}
+      {!user && pathname !== "/" && !routeFailed && <nav aria-label="主导航" className="mx-auto flex max-w-7xl flex-wrap gap-3 px-6 py-6"><Link href="/">首页</Link><Link href="/login">登录</Link><Link href="/register">注册账号</Link></nav>}
       <div id="app-content" ref={content} className={showSidebar ? "min-h-screen min-w-0 pt-14 lg:pl-[240px]" : "min-h-screen min-w-0"}>
         {showSidebar && <AppTopbar key={pathname} user={user!} openNavigation={() => setOpen(true)} navigationOpen={open} navigationTrigger={trigger} />}
         {children}

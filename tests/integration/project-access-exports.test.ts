@@ -97,7 +97,7 @@ describe.sequential("project isolation and compliance exports in isolated MySQL"
     const before = await db.auditLog.count({ where: { projectId } });
     for (const operation of [
       () => createTask({ projectId, title: "Unauthorized synthetic task", actorId: owner }),
-      () => createProject({ name: "Unauthorized synthetic project", description: "Synthetic only" }, { actorId: owner }),
+      () => createProject({ name: "Unauthorized synthetic project", description: "Synthetic only", initializeStandardTasks: true }, { actorId: owner }),
       () => saveTraceability(projectId, { kind: "requirement", title: "Unauthorized synthetic requirement", content: "Synthetic only", status: "DRAFT" }, { actorId: owner }),
       () => saveTraceability(projectId, { kind: "testCase", requirementId: randomUUID(), title: "Unauthorized synthetic test", status: "NOT_RUN" }, { actorId: owner }),
       () => assignTask({ taskId: task, assigneeId: member, actorId: owner }),

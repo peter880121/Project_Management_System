@@ -3,6 +3,7 @@ import { z } from "zod";
 export const createProjectSchema = z.object({
   name: z.string().trim().min(1).max(191),
   description: z.string().trim().max(5000).default(""),
+  initializeStandardTasks: z.boolean().default(true),
 }).strict();
 
 const requirement = {

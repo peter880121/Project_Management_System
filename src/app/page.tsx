@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { getCurrentUser } from "@/modules/auth/session";
+import { LandingPage } from "@/components/landing-page";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +11,9 @@ const agents = [
 ];
 
 export default async function Home() {
+  const user = await getCurrentUser();
+  if (!user) return <LandingPage />;
+
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-6 py-16">
 
