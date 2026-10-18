@@ -9,11 +9,11 @@ test.use({ channel: process.env.ACCEPTANCE_EDGE === "1" ? "msedge" : undefined }
 test.afterAll(() => db.$disconnect());
 
 for (const initialize of [true, false]) {
-  test(`PM creates ${initialize ? "standard WBS" : "empty project"} and lands on its board`, async ({ page, context, baseURL }) => {
+  test(`PM creates ${initialize ? "standard WBS" : "empty project"} and lands on member onboarding`, async ({ page, context, baseURL }) => {
     const actorId = "00000000-0000-4000-8000-000000000002";
     await context.addCookies([{ name: "medpm_session", value: createSessionToken(actorId, Date.now() + 3_600_000), url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
     await page.goto("/projects/new");
-    const name = `Synthetic template ${randomUUID()}`;
+    const name = `Synthetic ${initialize ? "医疗软件交付演示" : "空项目演示"} ${randomUUID().slice(0, 4)}`;
     await page.getByLabel("项目名称", { exact: true }).fill(name);
     const checkbox = page.getByRole("checkbox", { name: "自动按标准模板初始化阶段任务", exact: true });
     await expect(checkbox).toBeChecked();
@@ -23,8 +23,19 @@ for (const initialize of [true, false]) {
     const response = await created;
     expect(response.status()).toBe(201);
     const projectId = (await response.json()).data.id;
-    await page.waitForURL(url => url.pathname === `/projects/${projectId}/board`);
+    await page.waitForURL(url => url.pathname === `/projects/${projectId}/members` && url.searchParams.get("onboarding") === "1");
+    await expect(page.getByRole("region", { name: "新项目引导" })).toBeVisible();
+    if (initialize) {
+      await expect(page.getByRole("heading", { name: "已授权成员", exact: true })).toBeVisible();
+      await page.screenshot({ path: "test-results/ia-members-onboarding.png", fullPage: true });
+    }
+    await page.goto(`/projects/${projectId}/board`);
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+    if (initialize) {
+      await expect(page.getByRole("link", { name: "召开项目启动会", exact: true })).toBeVisible();
+      const collapsed = page.getByRole("region", { name: "待办列", exact: true }).getByRole("button", { expanded: false });
+      while (await collapsed.count()) await collapsed.first().click();
+    }
     const tasks = await db.task.findMany({ where: { projectId } });
     expect(tasks).toHaveLength(initialize ? 14 : 0);
     const audits = await db.auditLog.findMany({ where: { projectId } });

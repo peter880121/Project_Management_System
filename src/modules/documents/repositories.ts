@@ -18,8 +18,8 @@ export const queueCleanup = (tx: Prisma.TransactionClient, projectId: string, id
 export const findCleanup = (id: string) => prisma.syncFailure.findMany({ where: { entityType: "Document", entityId: id, target: "MINIO_DOCUMENT_CLEANUP" }, take: 10 });
 export const completeCleanup = (tx: Prisma.TransactionClient, id: string) => tx.syncFailure.deleteMany({ where: { id, target: "MINIO_DOCUMENT_CLEANUP" } });
 export const failCleanup = (tx: Prisma.TransactionClient, id: string) => tx.syncFailure.update({ where: { id }, data: { retryCount: { increment: 1 } } });
-export async function listDocuments(projectId: string, page: number) {
+export async function listDocuments(projectId: string, page: number, role = "MEMBER") {
   if (!await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } })) throw new DocumentError("项目不存在", 404);
-  return prisma.document.findMany({ where: { projectId }, select: publicDocumentSelect, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * 20, take: 20 });
+  return prisma.document.findMany({ where: { projectId, ...(role === "ADMIN" ? {} : { visibleRoles: { array_contains: role } }) }, select: publicDocumentSelect, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * 20, take: 20 });
 }
 export const projectExists = (tx: Prisma.TransactionClient, id: string) => tx.project.findUnique({ where: { id }, select: { id: true } });

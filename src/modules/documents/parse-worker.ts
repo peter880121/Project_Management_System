@@ -9,6 +9,7 @@ import { documentStorage, parseArtifactStorage, type DocumentStorage } from "./s
 import { createMineruClient, ParseError, type MineruClient } from "./mineru";
 import * as repository from "./parse-repositories";
 import { buildDocumentChunksTick, syncDocumentVectorTick } from "./rag-worker";
+import { syncAssetSourceTick } from "@/modules/assets/source-worker";
 
 const LEASE_MS = 180000;
 async function claimJob() {
@@ -121,7 +122,7 @@ export async function cleanupParseArtifact(artifacts = parseArtifactStorage) {
 }
 export async function runDocumentWorker(once = false, signal?: AbortSignal) {
   do {
-    try { await runParseWorkerTick(); await cleanupParseArtifact(); await buildDocumentChunksTick(); await syncDocumentVectorTick(); }
+    try { await syncAssetSourceTick(); await runParseWorkerTick(); await cleanupParseArtifact(); await buildDocumentChunksTick(); await syncDocumentVectorTick(); }
     catch { console.error("Document parse worker iteration failed; pending leases remain recoverable"); }
     if (once || signal?.aborted) break;
     try { await delay(2000, undefined, { signal }); } catch { break; }

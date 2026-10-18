@@ -9,10 +9,10 @@ type Context = { params: Promise<{ projectId: string }> };
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 function GETHandler(request: Request, context: Context) {
-  return documentHttp(documentReaders, async () => {
+  return documentHttp(documentReaders, async actor => {
     const parsed = z.object({ page: z.coerce.number().int().min(1).max(10000).default(1) }).strict().safeParse(Object.fromEntries(new URL(request.url).searchParams));
     if (!parsed.success) throw new DocumentError("分页参数无效", 400);
-    return Response.json({ data: await listDocuments(documentId((await context.params).projectId), parsed.data.page), page: parsed.data.page });
+    return Response.json({ data: await listDocuments(documentId((await context.params).projectId), parsed.data.page, actor.role), page: parsed.data.page });
   });
 }
 function POSTHandler(request: Request, context: Context) {

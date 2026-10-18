@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 function GETHandler(request: Request, context: { params: Promise<{ documentId: string }> }) {
   return documentHttp(documentReaders, async (actor) => {
     const result = await downloadDocument(documentId((await context.params).documentId), { actorId: actor.id, ...getAuditRequestMetadata(request) });
-    return new Response(new Uint8Array(result.bytes), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="document.pdf"; filename*=UTF-8''${encodeURIComponent(result.filename)}`, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Content-Length": String(result.bytes.length) } });
+    return new Response(new Uint8Array(result.bytes), { headers: { "Content-Type": result.mediaType ?? "application/pdf", "Content-Disposition": `attachment; filename="document"; filename*=UTF-8''${encodeURIComponent(result.filename)}`, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Content-Length": String(result.bytes.length) } });
   });
 }
 

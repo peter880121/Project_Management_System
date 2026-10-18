@@ -82,6 +82,10 @@ model User {
   updatedAt               DateTime                  @updatedAt @db.DateTime(3)
   ownedProjects           Project[]                 @relation("ProjectOwner")
   uploadedDocuments       Document[]                @relation("DocumentUploader")
+  createdDeliverables     Deliverable[]             @relation("DeliverableCreator")
+  reviewedDeliverables    Deliverable[]             @relation("DeliverableReviewer")
+  submittedDeliverables   Deliverable[]             @relation("DeliverableSubmitter")
+  meetingRecords          MeetingRecord[]
   documentParseJobs       DocumentParseJob[]        @relation("DocumentParseRequester")
   tasks                   Task[]
   weeklyCapacities         MemberWeeklyCapacity[]
@@ -140,6 +144,8 @@ model Project {
   tasks           Task[]
   requirements    Requirement[]
   documents       Document[]
+  deliverables    Deliverable[]
+  meetingRecords  MeetingRecord[]
   recommendations AIRecommendation[]
   suggestions     AiSuggestion[]
   syncFailures    SyncFailure[]
@@ -199,6 +205,8 @@ model Task {
   title                      String           @db.VarChar(191)
   description                String?          @db.Text
   status                     TaskStatus       @default(TODO)
+  requiresDeliverable        Boolean          @default(false)
+  deliverables               Deliverable[]
   estimateHours              Decimal?         @db.Decimal(8, 2)
   actualHours                Decimal?         @db.Decimal(8, 2)
   completedAt                DateTime?        @db.DateTime(3)
@@ -423,6 +431,11 @@ model Document {
   id            String                @id @default(uuid()) @db.Char(36)
   projectId     String                @db.Char(36)
   filename      String                @db.VarChar(512)
+  deliverable   Deliverable?
+  meetingRecord MeetingRecord?
+  assetJob      AssetSourceJob?
+  documentType  String                @default("DOCUMENT") @db.VarChar(32)
+  visibleRoles  Json                  @default("[\"ADMIN\",\"PM\",\"QA\",\"MEMBER\"]")
   minioKey      String                @db.VarChar(512)
   mediaType     String                @db.VarChar(191)
   parsedText    String?               @db.LongText
@@ -447,6 +460,76 @@ model Document {
 
   @@unique([projectId, uploadKey])
   @@index([projectId, createdAt])
+}
+
+enum DeliverableStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model Deliverable {
+  id            String            @id @default(uuid()) @db.Char(36)
+  projectId     String            @db.Char(36)
+  taskId        String?           @db.Char(36)
+  documentId    String            @unique @db.Char(36)
+  name          String            @db.VarChar(191)
+  seriesId      String            @db.Char(36)
+  version       Int               @default(1) @db.UnsignedInt
+  status        DeliverableStatus @default(DRAFT)
+  createdById   String            @db.Char(36)
+  submittedAt   DateTime?         @db.DateTime(3)
+  submittedById String?           @db.Char(36)
+  submittedBy   User?             @relation("DeliverableSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedById  String?           @db.Char(36)
+  reviewedAt    DateTime?         @db.DateTime(3)
+  reviewComment String?           @db.Text
+  rowVersion    Int               @default(1) @db.UnsignedInt
+  createdAt     DateTime          @default(now()) @db.DateTime(3)
+  updatedAt     DateTime          @updatedAt @db.DateTime(3)
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  task          Task?             @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  document      Document          @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  createdBy     User              @relation("DeliverableCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewedBy    User?             @relation("DeliverableReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  @@unique([projectId, seriesId, version])
+  @@index([projectId, taskId, status])
+  @@index([projectId, createdAt])
+}
+
+model MeetingRecord {
+  id          String   @id @default(uuid()) @db.Char(36)
+  projectId   String   @db.Char(36)
+  title       String   @db.VarChar(191)
+  meetingDate DateTime @db.DateTime(3)
+  content     String   @db.LongText
+  actionItems Json
+  createdById String   @db.Char(36)
+  requestKey  String   @db.Char(36)
+  visibleRoles Json    @default("[\"ADMIN\",\"PM\",\"QA\",\"MEMBER\"]")
+  documentId  String?  @unique @db.Char(36)
+  document    Document? @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @db.DateTime(3)
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  @@unique([projectId, requestKey])
+  @@index([projectId, meetingDate])
+}
+
+model AssetSourceJob {
+  id         String @id @default(uuid()) @db.Char(36)
+  documentId String @unique @db.Char(36)
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  status     String @default("QUEUED") @db.VarChar(16)
+  attempts   Int @default(0) @db.UnsignedInt
+  nextRunAt  DateTime @default(now()) @db.DateTime(3)
+  leaseToken String? @db.Char(36)
+  leaseUntil DateTime? @db.DateTime(3)
+  createdAt  DateTime @default(now()) @db.DateTime(3)
+  updatedAt  DateTime @updatedAt @db.DateTime(3)
+  @@index([status, nextRunAt, leaseUntil])
 }
 
 enum DocumentParseStatus {

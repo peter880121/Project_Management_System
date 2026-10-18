@@ -1,14 +1,17 @@
 import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import { writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { createSessionToken } from "../src/modules/auth/session-token";
 
-// Read existing synthetic fixtures only; this suite does not write business data.
+// UI interactions remain read-only; setup creates its own synthetic source/notification fixtures.
 const atlasId = "00000000-0000-4000-8000-000000000065";
 const beaconId = "00000000-0000-4000-8000-000000000066";
 const atlasPath = `/projects/${atlasId}/board`;
 const beaconPath = `/projects/${beaconId}/board`;
 let task: { id: string; title: string };
+let sourceChunk: { id: string; projectId: string };
+let privateNotification: { id: string };
 test.use({ channel: process.env.ACCEPTANCE_EDGE === "1" ? "msedge" : undefined });
 test.setTimeout(90_000);
 test.beforeAll(async () => {
@@ -17,6 +20,15 @@ test.beforeAll(async () => {
     const found = await db.task.findFirst({ where: { projectId: atlasId }, select: { id: true, title: true }, orderBy: { title: "asc" } });
     if (!found) throw new Error("Existing synthetic Atlas task required; no fixture is created by this suite.");
     task = found;
+    await db.$transaction(async tx => {
+      const text = "Synthetic breadcrumb fixture; no patient data.";
+      const digest = createHash("sha256").update(text).digest("hex");
+      const document = await tx.document.create({ data: { projectId: atlasId, filename: "synthetic-breadcrumb.pdf", minioKey: `synthetic/layout/${randomUUID()}.pdf`, mediaType: "application/pdf", parseStatus: "SUCCEEDED", parsedVersion: 1, parseVersion: 1 } });
+      const job = await tx.documentParseJob.create({ data: { documentId: document.id, version: 1, requestedById: "00000000-0000-4000-8000-000000000002", requestKey: randomUUID(), status: "SUCCEEDED", modelVersion: "synthetic-fixture", sourceSha256: digest, sourceFilename: document.filename, sourceSize: text.length, deadlineAt: new Date(), markdown: text } });
+      sourceChunk = await tx.documentChunk.create({ data: { documentId: document.id, projectId: atlasId, parseJobId: job.id, version: 1, ordinal: 0, text, textSha256: digest, page: 1, startOffset: 0, endOffset: text.length, embeddingModel: "synthetic-fixture", vectorStatus: "FAILED" } });
+      const suggestion = await tx.aiSuggestion.create({ data: { projectId: atlasId, type: "RISK", input: { source: "synthetic-layout-fixture" }, output: { taskId: task.id, taskTitle: task.title, evidence: ["Synthetic risk evidence"] } } });
+      privateNotification = await tx.riskNotification.create({ data: { userId: "00000000-0000-4000-8000-000000000002", suggestionId: suggestion.id } });
+    });
   } finally { await db.$disconnect(); }
 });
 test.beforeEach(async ({ context, baseURL, page }) => {
@@ -163,7 +175,7 @@ test("batch B document source keeps its document parent linked with scoped proje
   let chunk: { id: string; projectId: string };
   let project: { id: string; name: string };
   try {
-    chunk = await db.documentChunk.findFirstOrThrow({ select: { id: true, projectId: true }, orderBy: { id: "asc" } });
+    chunk = sourceChunk;
     project = await db.project.findUniqueOrThrow({ where: { id: chunk.projectId }, select: { id: true, name: true } });
   } finally { await db.$disconnect(); }
   await context.addCookies([{ name: "medpm_session", value: createSessionToken("00000000-0000-4000-8000-000000000001", Date.now() + 3_600_000), url: baseURL! }]);
@@ -218,7 +230,7 @@ test("batch B global pages and audit detail use static breadcrumbs; profile uses
 test("batch B private notifications show a static parent and clean it on navigation", async ({ page }) => {
   const db = new PrismaClient();
   let notification: { id: string };
-  try { notification = await db.riskNotification.findFirstOrThrow({ where: { userId: "00000000-0000-4000-8000-000000000002", suggestion: { project: { ownerId: "00000000-0000-4000-8000-000000000002" } } }, select: { id: true } }); }
+  try { notification = privateNotification; }
   finally { await db.$disconnect(); }
   await page.goto("/notifications");
   const crumbs = page.getByRole("navigation", { name: "面包屑", exact: true });

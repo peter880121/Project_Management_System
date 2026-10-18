@@ -57,7 +57,9 @@ export async function syncDocumentVectorTick(adapters: DocumentIndexAdapters = {
     await Promise.race([
       (async () => {
         const embedding = await adapters.embed(chunk.text, chunk.embeddingModel); if (expired) return;
-        await adapters.upsert({ id: chunk.id, docId: chunk.documentId, projectId: chunk.projectId, embedding, createdAt: chunk.createdAt });
+        const metadata = await prisma.document.findUniqueOrThrow({ where: { id: chunk.documentId }, select: { documentType: true, visibleRoles: true, deliverable: { select: { id: true, status: true } } } });
+        if (metadata.deliverable && metadata.deliverable.status !== "APPROVED") throw new Error("ASSET_NOT_APPROVED");
+        await adapters.upsert({ id: chunk.id, docId: chunk.documentId, projectId: chunk.projectId, embedding, createdAt: chunk.createdAt, documentType: metadata.documentType, visibleRoles: metadata.visibleRoles as string[], deliverableId: metadata.deliverable?.id ?? "" });
       })(),
       new Promise<never>((_, reject) => { timer = setTimeout(() => { expired = true; reject(new Error("DOCUMENT_INDEX_TIMEOUT")); }, 40000); }),
     ]);

@@ -1,0 +1,46 @@
+.medpm-gantt,
+html[data-theme=dark] .medpm-gantt {
+  color-scheme: light;
+  color: #0f172a;
+  background: #fff;
+  --g-arrow-color: #0f766e;
+  --g-bar-color: #ccfbf1;
+  --g-bar-border: #99f6e4;
+  --g-progress-color: #5eead4;
+  --g-text-dark: #134e4a;
+  --g-text-muted: #475569;
+  --g-text-light: #fff;
+  --g-header-background: #f8fafc;
+  --g-row-color: #fff;
+  --g-row-border-color: #cbd5e1;
+  --g-border-color: #e2e8f0;
+  --g-tick-color: #e2e8f0;
+  --g-tick-color-thick: #cbd5e1;
+  --g-handle-color: #0f766e;
+  --g-today-highlight: #0f766e;
+  --g-weekend-highlight-color: #f1f5f9;
+}
+.medpm-gantt .gantt { max-width: none; overflow: visible; }
+.medpm-gantt .gantt .bar-label { font-family: inherit; font-size: 12px; font-weight: 500; }
+.medpm-gantt .gantt .arrow { stroke-width: 1.5px; }
+/* Phase styling only: no synthetic rows or changes to drag/dependency identity. */
+.medpm-gantt .gantt .phase-0 .bar { fill: #ccfbf1; }
+.medpm-gantt .gantt .phase-1 .bar { fill: #99f6e4; }
+.medpm-gantt .gantt .phase-2 .bar { fill: #5eead4; }
+.medpm-gantt .gantt .phase-3 .bar { fill: #a5f3fc; }
+.medpm-gantt .gantt .phase-4 .bar { fill: #bae6fd; }
+.medpm-gantt .gantt .phase-5 .bar { fill: #c7d2fe; }
+.medpm-gantt .gantt .phase-other .bar { fill: #e2e8f0; }
+.medpm-gantt .gantt .is-complete .bar { fill: #e2e8f0; }
+.medpm-gantt .gantt .is-complete .bar-progress { fill: #cbd5e1; }
+.medpm-gantt .gantt .is-complete .handle { display: none; }
+.medpm-gantt .bar-wrapper:focus-visible .bar { outline: 2px solid #0f766e; outline-offset: 2px; }
+
+/* The legend shares the exact phase palette used by native task bars. */
+.medpm-gantt-legend .phase-0 { background: #ccfbf1; box-shadow: inset 0 0 0 1px #0f172a14; }
+.medpm-gantt-legend .phase-1 { background: #99f6e4; box-shadow: inset 0 0 0 1px #0f172a14; }
+.medpm-gantt-legend .phase-2 { background: #5eead4; box-shadow: inset 0 0 0 1px #0f172a14; }
+.medpm-gantt-legend .phase-3 { background: #a5f3fc; box-shadow: inset 0 0 0 1px #0f172a14; }
+.medpm-gantt-legend .phase-4 { background: #bae6fd; box-shadow: inset 0 0 0 1px #0f172a14; }
+.medpm-gantt-legend .phase-5 { background: #c7d2fe; box-shadow: inset 0 0 0 1px #0f172a14; }
+.medpm-gantt-legend .phase-other { background: #e2e8f0; }

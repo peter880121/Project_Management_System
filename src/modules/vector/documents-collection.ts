@@ -1,7 +1,7 @@
 import { DataType } from "@zilliz/milvus2-sdk-node";
 import { getMilvusClient } from "./client";
 
-export const DOCUMENTS_COLLECTION = "documents";
+export const DOCUMENTS_COLLECTION = "documents_v2";
 export const DOCUMENT_EMBEDDING_DIMENSION = 1536;
 
 /** Create the shared documents collection and its cosine HNSW index once. */
@@ -18,6 +18,10 @@ export async function ensureDocumentsCollection(): Promise<void> {
       fields: [
         { name: "id", data_type: DataType.VarChar, is_primary_key: true, max_length: 36 },
         { name: "docId", data_type: DataType.VarChar, max_length: 36 },
+        { name: "documentId", data_type: DataType.VarChar, max_length: 36 },
+        { name: "documentType", data_type: DataType.VarChar, max_length: 32 },
+        { name: "visibleRoles", data_type: DataType.JSON },
+        { name: "deliverableId", data_type: DataType.VarChar, max_length: 36 },
         { name: "projectId", data_type: DataType.VarChar, max_length: 36 },
         { name: "embedding", data_type: DataType.FloatVector, dim: DOCUMENT_EMBEDDING_DIMENSION },
         { name: "createdAt", data_type: DataType.Int64 },

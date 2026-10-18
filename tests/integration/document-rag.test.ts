@@ -55,7 +55,7 @@ describe.sequential("document RAG transactions in isolated MySQL", () => {
   });
   afterAll(async () => {
     // Only remove IDs created by the opt-in live adapter test in this isolated database.
-    try { if (liveIds.length) await getMilvusClient().delete({ collection_name: "documents", ids: liveIds, timeout: 10000 }); }
+    try { if (liveIds.length) await getMilvusClient().delete({ collection_name: "documents_v2", ids: liveIds, timeout: 10000 }); }
     finally {
       await db.$disconnect();
       try { if (/^medpm_rag_it_[a-f0-9]{32}$/.test(name)) await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS \`${name}\``); }

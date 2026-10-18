@@ -1,3 +1,4 @@
+import { canReadRoles } from "@/modules/assets/validation";
 import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { recordAudit, type AuditRequestMetadata } from "@/modules/audit/service";
@@ -105,7 +106,9 @@ export async function downloadDocument(id: string, actor: Actor, storage: Docume
   if (bytes.length !== row.fileSize || createHash("sha256").update(bytes).digest("hex") !== row.sha256) throw new DocumentError("文件完整性校验失败", 503);
   await prisma.$transaction(async (tx) => {
     await repository.lockDocumentActor(tx, actor.actorId, false, row.projectId);
+    const current = await tx.user.findUniqueOrThrow({ where: { id: actor.actorId }, select: { role: true } });
+    if (!canReadRoles(row.visibleRoles, current.role)) throw new DocumentError("无权访问此资产", 403);
     await recordAudit(tx, { ...actor, projectId: row.projectId, action: "DATA_EXPORTED", entityType: "Document", entityId: id, after: { scope: { projectId: row.projectId, documentIds: [id], filename: row.filename, sha256: row.sha256 }, exportedAt: new Date().toISOString() } });
   });
-  return { bytes, filename: row.filename };
+  return { bytes, filename: row.filename, mediaType: row.mediaType };
 }

@@ -8,11 +8,16 @@ import { requireRole } from "@/modules/auth/rbac";
 import { assignTask, changeTaskStatus } from "@/modules/audit/service";
 import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 
+import { signatureSchema } from "@/modules/tasks/signature";
+import { lockAssetActor } from "@/modules/assets/services";
+import { recordAudit } from "@/modules/audit/service";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const updateTaskSchema = z.union([
+  z.object({ requiresDeliverable: z.boolean(), expectedUpdatedAt: z.iso.datetime() }).strict(),
   z.object({ status: z.enum(["TODO", "IN_PROGRESS", "BLOCKED"]) }).strict(),
-  z.object({ status: z.literal("DONE"), actualHours: z.number().positive().max(10_000) }).strict(),
+  z.object({ status: z.literal("DONE"), actualHours: z.number().positive().max(10_000), ...signatureSchema.shape }).strict(),
   z.object({ assigneeId: z.uuid().nullable() }).strict(),
 ]);
 
@@ -26,6 +31,7 @@ async function GETHandler(_request: Request, context: { params: Promise<{ taskId
     where: { id: taskId },
     include: {
       assignee: { select: { id: true, name: true } },
+      deliverables: { where: { status: "APPROVED", document: { storageStatus: "AVAILABLE" } }, select: { id: true } },
       requirement: { include: { testCases: { select: { id: true, title: true, status: true } } } },
       project: { select: { id: true, name: true } },
       dependencies: { include: { dependsOn: { select: { id: true, title: true, status: true } } } },
@@ -50,8 +56,22 @@ async function PATCHHandler(request: Request, context: { params: Promise<{ taskI
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
   const parsed = updateTaskSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid task update", issues: parsed.error.issues }, { status: 400 });
-  const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, status: true, assigneeId: true } });
+  const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, projectId: true, status: true, assigneeId: true } });
   if (!task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  if ("requiresDeliverable" in parsed.data) {
+    const setting = parsed.data;
+    try {
+      const data = await prisma.$transaction(async tx => {
+        await lockAssetActor(tx, task.projectId, { actorId: user!.id }, ["PM", "ADMIN"]);
+        const old = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
+        if (old.status === "DONE" || old.updatedAt.toISOString() !== setting.expectedUpdatedAt) throw new Error("ASSET_TASK_CONFLICT");
+        const changed = await tx.task.update({ where: { id: taskId }, data: { requiresDeliverable: setting.requiresDeliverable } });
+        await recordAudit(tx, { actorId: user!.id, projectId: task.projectId, action: "TASK_DELIVERABLE_REQUIREMENT_CHANGED", entityType: "Task", entityId: taskId, before: { requiresDeliverable: old.requiresDeliverable }, after: { requiresDeliverable: changed.requiresDeliverable }, ...getAuditRequestMetadata(request) });
+        return changed;
+      });
+      return NextResponse.json({ data });
+    } catch (e) { if (e instanceof Error && e.message === "ASSET_TASK_CONFLICT") return NextResponse.json({ error: "任务已完成或已变化，请刷新" }, { status: 409 }); return businessErrorResponse(e); }
+  }
   if ("assigneeId" in parsed.data) {
     if (user!.role !== "PM") return NextResponse.json({ error: "Only PM can assign tasks" }, { status: 403 });
     if (parsed.data.assigneeId) {
@@ -71,7 +91,7 @@ async function PATCHHandler(request: Request, context: { params: Promise<{ taskI
     return NextResponse.json({ error: "Only PM or ADMIN can reopen a completed task" }, { status: 403 });
   }
   try {
-    const data = await changeTaskStatus({ taskId, status: targetStatus, ...("actualHours" in parsed.data ? { actualHours: parsed.data.actualHours } : {}), actorId: user!.id, ...getAuditRequestMetadata(request) });
+    const data = await changeTaskStatus({ taskId, status: targetStatus, ...("actualHours" in parsed.data ? { actualHours: parsed.data.actualHours, signaturePassword: parsed.data.signaturePassword, signatureReason: parsed.data.signatureReason } : {}), actorId: user!.id, ...getAuditRequestMetadata(request) });
     return NextResponse.json({ data });
   } catch (error) { return businessErrorResponse(error); }
 }

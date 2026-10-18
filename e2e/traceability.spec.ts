@@ -33,10 +33,11 @@ test("PM creates project and traceability; QA records a test result with audit p
   const projectCreated = page.waitForResponse(response => new URL(response.url()).pathname === "/api/projects" && response.request().method() === "POST");
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   expect((await projectCreated).status()).toBe(201);
-  await page.waitForURL(url => /^\/projects\/[0-9a-f-]{36}\/board$/.test(url.pathname));
+  await page.waitForURL(url => /^\/projects\/[0-9a-f-]{36}\/members$/.test(url.pathname));
   const projectId = page.url().split("/").at(-2)!;
   const qa = await db.user.findUniqueOrThrow({ where: { email: emails[1] } });
   expect((await page.request.put(`/api/projects/${projectId}/members`, { data: { userId: qa.id, active: true, expectedVersion: 0 } })).status()).toBe(200);
+  await page.goto(`/projects/${projectId}/board`);
   await page.getByRole("link", { name: "维护需求与测试追溯 →" }).click();
   const create = page.locator("form").filter({ has: page.getByRole("heading", { name: "新建需求", exact: true }) });
   await create.getByLabel("需求标题", { exact: true }).fill("Synthetic acceptance requirement");

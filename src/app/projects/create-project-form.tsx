@@ -19,7 +19,7 @@ export function CreateProjectForm() {
       const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: values.get("name"), description: values.get("description"), initializeStandardTasks: values.get("initializeStandardTasks") === "on" }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "创建失败");
-      router.push(`/projects/${encodeURIComponent(result.data.id)}/board`); router.refresh();
+      router.push(`/projects/${encodeURIComponent(result.data.id)}/members?onboarding=1`); router.refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "网络连接失败，请核对项目列表后重试"); lock.current = false; setBusy(false); }
   }
   return <form onSubmit={submit} className="mt-6 space-y-3 rounded-xl border bg-white p-5">

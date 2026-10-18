@@ -1,4 +1,7 @@
 "use client";
+import { DeliverablesPanel } from "@/components/assets/deliverables-panel";
+import { checkCompletionTask } from "@/components/assets/completion-check";
+import { ElectronicSignatureModal } from "./electronic-signature-modal";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ExternalLink, X } from "lucide-react";
@@ -10,7 +13,7 @@ import { canUpdateTask, taskColumns, taskPhase, taskStatusOptions, type TaskChan
 import { statusLabels } from "./task-card";
 import { canRefineTask, canCheckTaskEvidence } from "@/modules/ai/task-actions";
 
-export function TaskDetailDrawer({ taskId, initialMode, projectId, role, userId, onClose, onUpdate, onRefresh }: { taskId: string; initialMode?: "wbs" | "compliance"; projectId: string; role: string; userId: string; onClose: () => void; onUpdate: (taskId: string, change: TaskChange) => Promise<void>; onRefresh: () => Promise<void> }) {
+export function TaskDetailDrawer({ taskId, initialMode, initialDeliverableGuide = false, projectId, role, userId, onClose, onUpdate, onRefresh }: { taskId: string; initialDeliverableGuide?: boolean; initialMode?: "wbs" | "compliance"; projectId: string; role: string; userId: string; onClose: () => void; onUpdate: (taskId: string, change: TaskChange) => Promise<void>; onRefresh: () => Promise<void> }) {
   const { notify } = useToast();
   useDialogToasts();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -23,7 +26,10 @@ export function TaskDetailDrawer({ taskId, initialMode, projectId, role, userId,
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [signing, setSigning] = useState(false);
   const [actualHours, setActualHours] = useState("");
+  const [assetTab, setAssetTab] = useState(initialDeliverableGuide);
+  const [guide, setGuide] = useState(initialDeliverableGuide);
   const [mode, setMode] = useState<"details" | "wbs" | "compliance">(initialMode ?? "details");
   const [membersAttempt, setMembersAttempt] = useState(0);
   useEffect(() => {
@@ -43,6 +49,7 @@ export function TaskDetailDrawer({ taskId, initialMode, projectId, role, userId,
       if (current.signal.aborted) return;
       if (!response.ok || !result.data || result.data.id !== taskId) throw new Error(result.error || "无法加载任务详情");
       setTask(result.data);
+      if (result.data.deliverables?.length) setGuide(false);
     } catch (cause) {
       if (!current.signal.aborted) { const message = cause instanceof Error ? cause.message : "无法加载任务详情"; setError(message); throw new Error(message); }
     } finally { if (!current.signal.aborted) setRefreshing(false); }
@@ -65,6 +72,16 @@ export function TaskDetailDrawer({ taskId, initialMode, projectId, role, userId,
     catch (cause) { setError(cause instanceof Error ? cause.message : "更新失败，请重试"); }
     finally { submitting.current = false; setBusy(false); }
   }
+  async function requestCompletion() {
+    if (submitting.current) return; submitting.current = true; setBusy(true); setError("");
+    const current = new AbortController(); controller.current?.abort(); controller.current = current;
+    try {
+      const fresh = await checkCompletionTask(taskId, current.signal); if (current.signal.aborted) return; setTask(fresh);
+      if (fresh.requiresDeliverable && !fresh.deliverables?.length) { setGuide(true); setAssetTab(true); return; }
+      setGuide(false); setSigning(true);
+    } catch (e) { if (!current.signal.aborted) setError(e instanceof Error ? e.message : "无法核对交付证据"); }
+    finally { submitting.current = false; if (!current.signal.aborted) setBusy(false); }
+  }
   async function accepted() {
     const results = await Promise.allSettled([onRefresh(), load()]);
     if (results.some(result => result.status === "rejected")) { notify("AI 采纳已保存，但列表或详情刷新失败", "error"); throw new Error("Refresh failed"); }
@@ -76,10 +93,13 @@ export function TaskDetailDrawer({ taskId, initialMode, projectId, role, userId,
       {error && <div role="alert" className="m-5 rounded-lg bg-red-50 p-3 text-sm text-red-800"><p>{error}</p><button type="button" onClick={() => void load().catch(() => {})} className="mt-2">重新加载详情</button></div>}
       {!task ? (!error && <TaskDetailSkeleton />) : <div className="space-y-5 p-5">
         <div><div className="mb-2 flex flex-wrap gap-2">{taskPhase(task.description) && <span className="rounded bg-teal-50 px-2 py-1 text-xs text-teal-800">{taskPhase(task.description)}</span>}<span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">{taskColumns.find(column => column.status === task.status)?.title}</span></div><h3 className="break-words text-xl font-semibold">{task.title}</h3></div>
-        {mode !== "details" ? <><button type="button" onClick={() => setMode("details")} className="inline-flex items-center gap-2 border-0 p-0 text-sm text-teal-800"><ArrowLeft aria-hidden="true" className="size-4" />返回任务信息</button><TaskAiContent key={`${task.id}:${mode}`} selection={{ task, mode }} projectId={projectId} role={role} onAccepted={accepted} onFeedback={notify} /></> : <>
+        {mode === "details" && <div role="tablist" aria-label="任务工作区" className="flex gap-2 border-b border-slate-200 pb-2"><button type="button" role="tab" aria-selected={!assetTab} onClick={() => setAssetTab(false)} className="rounded-lg px-3 py-2 text-sm text-teal-800">任务信息</button><button type="button" role="tab" aria-selected={assetTab} onClick={() => setAssetTab(true)} className="rounded-lg bg-teal-50 px-3 py-2 text-sm text-teal-800">📎 交付物管理</button></div>}
+        {mode === "details" && guide && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm leading-7 text-amber-900">该任务必须挂载交付物。请前往下方【交付物管理】上传并通过审批后再完成。<button type="button" onClick={() => setAssetTab(true)} className="mt-2 block font-semibold underline">前往交付物管理</button></div>}
+        {mode === "details" && assetTab ? <DeliverablesPanel projectId={projectId} taskId={taskId} role={role} userId={userId} onChanged={async () => { await Promise.all([load(), onRefresh()]); }} /> : mode !== "details" ? <><button type="button" onClick={() => setMode("details")} className="inline-flex items-center gap-2 border-0 p-0 text-sm text-teal-800"><ArrowLeft aria-hidden="true" className="size-4" />返回任务信息</button><TaskAiContent key={`${task.id}:${mode}`} selection={{ task, mode }} projectId={projectId} role={role} onAccepted={accepted} onFeedback={notify} /></> : <>
+          {["PM", "ADMIN"].includes(role) && <label className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"><input type="checkbox" checked={!!task.requiresDeliverable} disabled={busy || refreshing || task.status === "DONE" || !task.updatedAt} onChange={event => void change({ requiresDeliverable: event.target.checked, expectedUpdatedAt: task.updatedAt! })} />📎 完成前必须有审批通过的交付物</label>}
           <section><h4 className="text-sm font-semibold">任务说明</h4><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-7 text-slate-600">{task.description || "暂无任务说明"}</p></section>
           <section className="space-y-3 rounded-xl bg-slate-50 p-4"><h4 className="text-sm font-semibold">负责人和状态</h4>{role === "PM" ? <><label className="block text-xs text-slate-600">分配负责人<select aria-label={`分配 ${task.title}`} disabled={busy || refreshing || usersLoading || !!usersError} value={task.assigneeId || ""} onChange={event => void change({ assigneeId: event.target.value || null })} className="mt-2 block w-full rounded-md bg-white p-2 text-sm"><option value="">未分配</option>{task.assigneeId && !users.some(user => user.id === task.assigneeId) && <option value={task.assigneeId}>{task.assignee?.name || "当前负责人"}</option>}{users.map(user => <option key={user.id} value={user.id}>{user.name} · {user.email}</option>)}</select></label>{usersLoading && <p className="text-xs text-slate-500">正在加载可分配成员…</p>}{usersError && <p role="alert" className="text-sm text-red-800">{usersError}<button type="button" className="ml-2" onClick={() => setMembersAttempt(value => value + 1)}>重试成员列表</button></p>}</> : <p className="text-sm">负责人：{task.assignee?.name || "未分配"}</p>}
-            {canUpdateTask(task, role, userId) && <>{task.status === "IN_PROGRESS" && <label className="block text-xs text-slate-600">实际工时（完成任务时必填）<input aria-label={`实际工时 ${task.title}`} type="number" min="0.01" max="10000" step="0.01" value={actualHours} onChange={event => setActualHours(event.target.value)} className="mt-2 block w-full rounded-md border border-slate-200 bg-white p-2 text-sm" /></label>}<div className="flex flex-wrap gap-2">{taskStatusOptions(task.status, role).map(status => <button key={status} type="button" disabled={busy || refreshing || (status === "DONE" && !(Number(actualHours) > 0 && Number(actualHours) <= 10000))} onClick={() => void change(status === "DONE" ? { status, actualHours: Number(actualHours) } : { status })} className="rounded-md border-teal-200 bg-white px-3 py-2 text-xs text-teal-800 disabled:opacity-40">{task.status === "DONE" && status === "IN_PROGRESS" ? "重新打开" : statusLabels[status]}</button>)}</div></>}
+            {canUpdateTask(task, role, userId) && <>{task.status === "IN_PROGRESS" && <label className="block text-xs text-slate-600">实际工时（完成任务时必填）<input aria-label={`实际工时 ${task.title}`} type="number" min="0.01" max="10000" step="0.01" value={actualHours} onChange={event => setActualHours(event.target.value)} className="mt-2 block w-full rounded-md border border-slate-200 bg-white p-2 text-sm" /></label>}<div className="flex flex-wrap gap-2">{taskStatusOptions(task.status, role).map(status => <button key={status} type="button" disabled={busy || refreshing || (status === "DONE" && !(Number(actualHours) > 0 && Number(actualHours) <= 10000))} onClick={() => { if (status === "DONE") void requestCompletion(); else void change({ status }); }} className="rounded-md border-teal-200 bg-white px-3 py-2 text-xs text-teal-800 disabled:opacity-40">{task.status === "DONE" && status === "IN_PROGRESS" ? "重新打开" : statusLabels[status]}</button>)}</div></>}
             <p className="text-xs text-slate-500">预计 {task.estimateHours ?? "未填写"} 小时 · 实际 {task.actualHours ?? "未记录"} 小时</p>
           </section>
           {((role === "PM" && canRefineTask(task.title)) || (["PM", "ADMIN", "QA"].includes(role) && canCheckTaskEvidence(task.title))) && <section><h4 className="mb-3 text-sm font-semibold">AI 任务助手</h4><TaskAiActions task={task} role={role} onSelect={selection => setMode(selection.mode)} /></section>}
@@ -89,6 +109,10 @@ export function TaskDetailDrawer({ taskId, initialMode, projectId, role, userId,
           <Link href={`/tasks/${task.id}`} className="inline-flex items-center gap-2 border-0 p-0 text-sm text-teal-800">打开完整任务详情<ExternalLink aria-hidden="true" className="size-4" /></Link>
         </>}
       </div>}
-    </div><ToastViewport />
+    </div>{signing && task && <ElectronicSignatureModal task={task} actualHours={actualHours} onClose={() => setSigning(false)} onConfirm={async value => {
+      await onUpdate(taskId, value);
+      setTask(current => current ? { ...current, status: "DONE", actualHours: String(value.actualHours) } : current);
+      try { await load(); } catch { notify("签署已成功，但数据刷新失败，请手动刷新", "error"); }
+    }} />}<ToastViewport />
   </dialog>;
 }

@@ -26,3 +26,9 @@ it.each([new BusinessError("Task not found", 404), new ProjectAccessError("Forbi
   expect(response.status).toBe(error.status);
   expect(await response.json()).toEqual({ error: error.message });
 });
+
+it("maps closed transactions to retryable 503", async () => {
+  const response = businessErrorResponse(new Prisma.PrismaClientKnownRequestError("private transaction stack", { code: "P2028", clientVersion: "test" }));
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: "系统繁忙，请重试" });
+});

@@ -147,18 +147,35 @@ async function main() {
       });
 
       const suggestionId = id(601 + projectIndex);
-      await tx.aiSuggestion.upsert({
+      const suggestionOutput = {
+        title: `${project.name.split(" ")[0]} 发布范围与验收证据复核`,
+        description: "内置合成演示建议，非模型推断。交付物：发布范围与验收条件清单；验收条件：需求、任务与测试证据可追溯。需 PM 人工采纳后才创建正式任务。",
+        estimateHours: 4,
+        suggestedRole: "PM",
+        dependencyIds: [],
+        dependencyTitles: [],
+        sourceChunkIds: [],
+      };
+      const savedSuggestion = await tx.aiSuggestion.upsert({
         where: { id: suggestionId },
         create: {
           id: suggestionId,
           projectId: project.id,
           type: "WBS",
           input: { source: "synthetic-seed", request: "Break down fictional software delivery work" },
-          output: { proposal: ["Review scope", "Implement change", "Verify traceability"], requiresHumanReview: true },
+          output: suggestionOutput,
           status: "PENDING",
         },
         update: {},
       });
+      // Repair only our own still-pending legacy fixture; never overwrite generated or reviewed output.
+      if (savedSuggestion.status === "PENDING" && savedSuggestion.input?.source === "synthetic-seed" && Array.isArray(savedSuggestion.output?.proposal)) {
+        await tx.aiSuggestion.update({ where: { id: suggestionId }, data: { output: suggestionOutput } });
+        await tx.auditLog.create({ data: {
+          actorId: systemUserId, projectId: project.id, action: "SEED_SUGGESTION_MIGRATED", entityType: "AiSuggestion", entityId: suggestionId,
+          before: savedSuggestion.output, after: suggestionOutput, userAgent: "MedPM-AI synthetic seed",
+        } });
+      }
     }
 
     for (let index = 0; index < tasks.length; index += 1) {

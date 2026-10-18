@@ -10,7 +10,7 @@ import * as repository from "./rag-repositories";
 export const documentSearchSchema = z.object({ query: z.string().trim().min(1).max(2000).refine((value) => /[\p{L}\p{N}]/u.test(value), "请输入文字或数字"), limit: z.number().int().min(1).max(12).default(8), documentId: z.uuid().optional(), version: z.number().int().positive().optional() }).strict().refine((value) => value.version === undefined || value.documentId !== undefined, "指定版本时需指定文档");
 export type RetrievalAdapters = {
   embed: (query: string) => Promise<number[]>;
-  search: (projectId: string, embedding: number[], documentId?: string) => Promise<string[]>;
+  search: (projectId: string, embedding: number[], documentId?: string, role?: string) => Promise<string[]>;
   load: typeof repository.loadEvidenceByIds;
   keyword: typeof repository.keywordEvidence;
   timeoutMs?: number;
@@ -25,7 +25,7 @@ export async function retrieveDocumentEvidence(scope: repository.SearchScope, qu
     hits = await Promise.race([
       (async () => {
         const embedding = await adapters.embed(query); if (expired) return [];
-        const ids = await adapters.search(scope.projectId, embedding, scope.documentId); if (expired) return [];
+        const ids = await adapters.search(scope.projectId, embedding, scope.documentId, scope.role); if (expired) return [];
         return adapters.load(scope, ids);
       })(),
       new Promise<never>((_, reject) => { timer = setTimeout(() => { expired = true; reject(new Error("RETRIEVAL_TIMEOUT")); }, adapters.timeoutMs ?? 1500); }),
@@ -43,10 +43,13 @@ export async function searchProjectDocuments(projectId: string, input: z.infer<t
     const document = await repository.findRagDocument(input.documentId);
     if (!document || document.projectId !== projectId) throw new DocumentError("项目文档不存在", 404);
   }
-  const result = await retrieveDocumentEvidence({ projectId, documentId: input.documentId, version: input.version }, input.query, input.limit);
+  const requester = await prisma.user.findUniqueOrThrow({ where: { id: actor.actorId }, select: { role: true } });
+  const result = await retrieveDocumentEvidence({ projectId, documentId: input.documentId, version: input.version, role: requester.role }, input.query, input.limit);
   // Fail closed if the evidence cannot be audited; do not return unaudited sources.
   await prisma.$transaction(async (tx) => {
     await lockDocumentActor(tx, actor.actorId, false, projectId);
+    const current = await tx.user.findUniqueOrThrow({ where: { id: actor.actorId }, select: { role: true } });
+    if (current.role !== requester.role) throw new DocumentError("权限已变化，请重新检索", 403);
     await recordAudit(tx, { ...actor, projectId, action: "RAG_SEARCH", entityType: "Project", entityId: projectId, after: {
       source: "documents", query: input.query, documentId: input.documentId ?? null, version: input.version ?? null,
       hitIds: result.hitIds, evidence: result.hits.map((hit) => ({ chunkId: hit.id, documentId: hit.documentId, version: hit.version, textSha256: hit.textSha256, page: hit.page })),

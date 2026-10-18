@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { DataType, MilvusClient } from "@zilliz/milvus2-sdk-node";
 
 const address = process.env.MILVUS_ADDRESS;
@@ -8,7 +9,7 @@ const client = new MilvusClient({
   ...(process.env.MILVUS_TOKEN ? { token: process.env.MILVUS_TOKEN } : {}),
 });
 
-const collectionName = "documents";
+const collectionName = "documents_v2";
 const { value: exists } = await client.hasCollection({ collection_name: collectionName });
 
 if (!exists) {
@@ -18,6 +19,10 @@ if (!exists) {
     fields: [
       { name: "id", data_type: DataType.VarChar, is_primary_key: true, max_length: 36 },
       { name: "docId", data_type: DataType.VarChar, max_length: 36 },
+      { name: "documentId", data_type: DataType.VarChar, max_length: 36 },
+      { name: "documentType", data_type: DataType.VarChar, max_length: 32 },
+      { name: "visibleRoles", data_type: DataType.JSON },
+      { name: "deliverableId", data_type: DataType.VarChar, max_length: 36 },
       { name: "projectId", data_type: DataType.VarChar, max_length: 36 },
       { name: "embedding", data_type: DataType.FloatVector, dim: 1536 },
       { name: "createdAt", data_type: DataType.Int64 },

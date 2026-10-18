@@ -332,7 +332,7 @@ async function fillPasswordChange(page: Page, newPassword: string) {
 
 test("unauthenticated profile redirects to login and home navigation shows guest links", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "登录", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "产品导航" }).getByRole("link", { name: "登录", exact: true })).toBeVisible();
   await page.goto("/profile");
   await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("next") === "/profile");
 });

@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { WbsPanel } from "@/app/projects/[projectId]/board/wbs-panel";
 import { CompliancePanel, type SavedSummary } from "@/app/audit/compliance-panel";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useAiGeneration } from "./use-ai-generation";
+import { AiGenerationPreview } from "./ai-generation-preview";
+import { AiStreamError } from "@/modules/ai/streaming/client";
 
 export type TaskAiSelection = { task: { id: string; title: string }; mode: "wbs" | "compliance" };
 
@@ -11,22 +13,32 @@ function TaskEvidence({ projectId, taskId, canReview, onFeedback }: { projectId:
   const [summary, setSummary] = useState<SavedSummary | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const { execute, stop, running, preview, stage, stopped, lastId } = useAiGeneration<SavedSummary>();
   useEffect(() => {
-    const controller = new AbortController();
+    let active = true;
     setError(""); setSummary(null);
-    void (async () => {
-      try {
-        const response = await fetch("/api/audit/summary", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId, taskId }), signal: controller.signal });
-        const result = await response.json();
-        if (controller.signal.aborted) return;
-        if (!response.ok) throw new Error(result.error || "证据检查失败");
-        setSummary(result);
-        onFeedback?.("任务证据检查完成，结论仍需人工复核", "success");
-      } catch (cause) { if (!controller.signal.aborted) { const message = cause instanceof Error ? cause.message : "证据检查失败，请重试"; setError(message); onFeedback?.(message, "error"); } }
-    })();
-    return () => controller.abort();
-  }, [projectId, taskId, attempt, onFeedback]);
-  return <>{error ? <div role="alert" className="mt-5 rounded-lg bg-red-50 p-4 text-red-800"><p>{error}</p><button onClick={() => setAttempt(value => value + 1)} className="mt-3">重试证据检查</button></div> : summary ? <CompliancePanel key={summary.summaryId} initial={summary} canReview={canReview} /> : <div role="status" aria-label="正在检查合规证据" className="space-y-4 py-6"><span className="sr-only">正在检查当前任务的需求、测试与审计证据</span><Skeleton className="h-6 w-2/3" /><Skeleton className="h-24 w-full" /><Skeleton className="h-32 w-full" /></div>}</>;
+    void execute("/api/audit/summary", { projectId, taskId }).then(result => {
+      if (active && result) { setSummary(result); onFeedback?.("任务证据检查完成，结论仍需人工复核", "success"); }
+    }).catch(cause => {
+      if (active) { const message = cause instanceof Error ? cause.message : "证据检查失败，请重试"; setError(message); if (!(cause instanceof AiStreamError && cause.code === "UNAUTHORIZED")) onFeedback?.(message, "error"); }
+    });
+    return () => { active = false; };
+  }, [projectId, taskId, attempt, onFeedback, execute]);
+  async function recover() {
+    if (!lastId) return;
+    try {
+      const response = await fetch(`/api/audit/summary?projectId=${projectId}&taskId=${taskId}&generationId=${lastId}`, { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "尚未查到已保存结果，请稍后核对");
+      setSummary(result); setError("");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "核对失败"); }
+  }
+  return <><AiGenerationPreview running={running} preview={preview} stage={stage} stopped={stopped} onStop={stop} />
+    {stopped && <div className="mt-3 flex gap-3"><button onClick={() => void recover()}>核对已保存结果</button><button onClick={() => setAttempt(value => value + 1)}>重新检查证据</button></div>}
+    {error && <div role="alert" className="mt-5 rounded-lg bg-red-50 p-4 text-red-800"><p>{error}</p><button onClick={() => setAttempt(value => value + 1)} className="mt-3">重试证据检查</button></div>}
+    {summary && <CompliancePanel key={summary.summaryId} initial={summary} canReview={canReview} />}
+  </>;
+
 }
 
 export function TaskAiContent({ selection, projectId, role, onAccepted, onFeedback }: { selection: TaskAiSelection; projectId: string; role: string; onAccepted: () => Promise<void>; onFeedback?: (message: string, kind: "success" | "error") => void }) {

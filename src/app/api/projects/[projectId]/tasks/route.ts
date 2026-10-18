@@ -11,6 +11,7 @@ import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const createTaskSchema = z.object({
+  requiresDeliverable: z.boolean().optional(),
   title: z.string().trim().min(1).max(191),
   description: z.string().trim().max(10_000).optional(),
   requirementId: z.uuid().optional(),
@@ -28,6 +29,7 @@ async function GETHandler(_request: Request, context: { params: Promise<{ projec
     where: { projectId },
     include: {
       assignee: { select: { id: true, name: true } },
+      deliverables: { where: { status: "APPROVED", document: { storageStatus: "AVAILABLE" } }, select: { id: true } },
       requirement: { select: { id: true, title: true } },
       dependencies: { include: { dependsOn: { select: { id: true, title: true, status: true } } } },
     },

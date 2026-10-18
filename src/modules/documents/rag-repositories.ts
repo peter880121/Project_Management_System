@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { documentEmbeddingModel } from "@/modules/ai/embeddings";
 
-export type SearchScope = { projectId: string; documentId?: string; version?: number };
+export type SearchScope = { projectId: string; documentId?: string; version?: number; role?: string };
 export type ChunkEvidence = { id: string; documentId: string; version: number; ordinal: number; text: string; textSha256: string; page: number | null; blockIndex: number | null; startOffset: number; endOffset: number; filename: string; parseJobId: string };
 type RawEvidence = Omit<ChunkEvidence, "version" | "ordinal" | "page" | "blockIndex" | "startOffset" | "endOffset"> & { version: number | bigint; ordinal: number | bigint; page: number | bigint | null; blockIndex: number | bigint | null; startOffset: number | bigint; endOffset: number | bigint };
 function normalizeEvidence(row: RawEvidence): ChunkEvidence {
@@ -12,6 +12,8 @@ export const findRagProject = (id: string) => prisma.project.findUnique({ where:
 const columns = Prisma.sql`c.id, c.documentId, c.version, c.ordinal, c.text, c.textSha256, c.page, c.blockIndex, c.startOffset, c.endOffset, c.parseJobId, d.filename`;
 function scopeWhere(scope: SearchScope) {
   return Prisma.sql`d.projectId = ${scope.projectId} AND c.projectId = ${scope.projectId} AND d.storageStatus = 'AVAILABLE'
+    AND ${scope.role === "ADMIN" ? Prisma.sql`TRUE` : Prisma.sql`JSON_CONTAINS(d.visibleRoles, JSON_QUOTE(${scope.role ?? "MEMBER"}))`}
+    AND NOT EXISTS (SELECT 1 FROM Deliverable a WHERE a.documentId = d.id AND a.status <> 'APPROVED')
     AND ${scope.documentId ? Prisma.sql`d.id = ${scope.documentId}` : Prisma.sql`TRUE`}
     AND ${scope.version !== undefined ? Prisma.sql`c.version = ${scope.version}` : Prisma.sql`c.version = d.parsedVersion`}`;
 }
@@ -35,7 +37,7 @@ export async function keywordEvidence(scope: SearchScope, query: string, limit: 
     ORDER BY (${Prisma.join(scores, " + ")}) DESC, c.documentId, c.ordinal LIMIT ${limit}`);
   return rows.map(normalizeEvidence);
 }
-export const chunkSource = (id: string) => prisma.documentChunk.findUnique({ where: { id }, select: { id: true, documentId: true, projectId: true, version: true, ordinal: true, text: true, textSha256: true, page: true, blockIndex: true, startOffset: true, endOffset: true, parseJobId: true, document: { select: { filename: true, parsedVersion: true } } } });
+export const chunkSource = (id: string) => prisma.documentChunk.findUnique({ where: { id }, select: { id: true, documentId: true, projectId: true, version: true, ordinal: true, text: true, textSha256: true, page: true, blockIndex: true, startOffset: true, endOffset: true, parseJobId: true, document: { select: { filename: true, parsedVersion: true, visibleRoles: true } } } });
 export const ragStatus = (documentId: string, version: number) => prisma.documentChunk.groupBy({ by: ["vectorStatus"], where: { documentId, version }, _count: true });
 export const findRagDocument = (id: string) => prisma.document.findUnique({ where: { id }, select: { id: true, projectId: true, parsedVersion: true, chunkedVersion: true } });
 export const buildFailure = (id: string, version: number) => prisma.syncFailure.findFirst({ where: { entityId: id, target: "DOCUMENT_CHUNK_BUILD", payload: { path: "$.version", equals: version } }, select: { id: true } });

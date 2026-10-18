@@ -30,6 +30,7 @@ test("consecutive schedule saves use each task's dates, hours, dependencies and 
     await route.fulfill({ json: { data: { id: task.id, scheduleVersion: task.scheduleVersion } } });
   });
   await page.goto(`/projects/${projectId}/planning`);
+  await page.getByRole("button", { name: "表格视图", exact: true }).click();
   const first = page.locator("article").filter({ has: page.getByRole("link", { name: tasks[0].title, exact: true }) });
   const second = page.locator("article").filter({ has: page.getByRole("link", { name: tasks[1].title, exact: true }) });
   await first.getByRole("button", { name: "保存排期", exact: true }).click();
@@ -46,7 +47,7 @@ test("consecutive schedule saves use each task's dates, hours, dependencies and 
   await page.screenshot({ path: "test-results/pm-planning-mobile.png", fullPage: true });
 });
 
-test("project overview emphasizes status and project creation returns with explicit success", async ({ page }) => {
+test("project creation guides members, planning and board in sequence", async ({ page }) => {
   await page.route("**/api/projects", route => route.request().method() === "POST" ? route.fulfill({ status: 201, json: { data: { id: projectId } } }) : route.continue());
   await page.goto("/projects");
   await expect(page.getByRole("region", { name: "项目状态概览", exact: true })).toBeVisible();
@@ -57,8 +58,30 @@ test("project overview emphasizes status and project creation returns with expli
   await page.getByLabel("项目名称", { exact: true }).fill("Synthetic isolated UI project");
   await page.getByLabel("项目描述", { exact: true }).fill("Synthetic UI request; persistence mocked");
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "项目列表已更新" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Atlas Release Readiness", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/members\\?onboarding=1$`));
+  await expect(page.getByRole("region", { name: "新项目引导" })).toContainText("加入项目不会自动分配任务");
+  await page.screenshot({ path: "test-results/ia-members-onboarding.png", fullPage: true });
+  await page.getByRole("link", { name: "下一步：分配负责人和排期 →", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/planning\\?onboarding=1$`));
+  await page.getByRole("link", { name: "进入看板执行 →", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/board$`));
+});
+
+test("slow or unavailable phase metadata never blocks planning and never issues per-task requests", async ({ page }) => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let requests = 0;
+  const task = { id: "7766504f-dd80-4ddc-aaee-ba7e2c605c54", title: "Synthetic phase preview", status: "TODO", scheduleVersion: 0, plannedStartDate: "2026-10-19", dueDate: "2026-10-21", estimateHours: 8, dependencyIds: [], assignee: null };
+  await page.route(`**/api/projects/${projectId}/tasks`, async route => { requests++; await held; await route.fulfill({ status: 503, json: { error: "Synthetic unavailable metadata" } }); });
+  await page.route(`**/api/projects/${projectId}/planning?*`, route => route.fulfill({ json: { data: { tasks: [task], members: [], loads: [] } } }));
+  try {
+    await page.goto(`/projects/${projectId}/planning`);
+    await expect(page.locator(`.bar-wrapper[data-id="${task.id}"]`)).toBeVisible();
+    await expect(page.getByLabel("甘特任务列表")).toContainText("[未分组]");
+  } finally { release(); }
+  await expect(page.getByLabel("操作反馈").getByRole("alert")).toContainText("阶段信息暂时无法读取");
+  await expect(page.getByRole("button", { name: "刷新排期", exact: true })).toBeEnabled();
+  expect(requests).toBe(1);
 });
 
 test("task creation is separate and returns to the status board with the new task", async ({ page }) => {

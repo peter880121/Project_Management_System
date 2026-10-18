@@ -4,6 +4,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { canTransitionTaskStatus } from "@/modules/tasks/status";
 import { assertProjectAccessTx, participant, ProjectAccessError, lockBusinessActor } from "@/modules/auth/project-access";
+import { signatureSchema } from "@/modules/tasks/signature";
+import { verifyPassword } from "@/modules/auth/password";
 import { BusinessError } from "./errors";
 import { prerequisiteMessage, suggestionTitle } from "@/modules/ai/wbs/review-state";
 
@@ -19,6 +21,9 @@ async function suggestionProjectId(id: string) {
 }
 
 export type AuditAction =
+  | "DELIVERABLE_CREATED" | "DELIVERABLE_UPDATED" | "DELIVERABLE_SUBMITTED" | "DELIVERABLE_REVIEWED"
+  | "MEETING_CREATED" | "ASSET_INDEX_REQUESTED" | "ASSET_SOURCE_SYNCED" | "ASSET_SOURCE_FAILED" | "TASK_DELIVERABLE_REQUIREMENT_CHANGED"
+  | "AI_GENERATION_CANCELLED"
   | "PROJECT_MEMBER_UPDATED"
   | "COMPLIANCE_EXPORT_PREPARED"
   | "COMPLIANCE_EXPORT_FAILED"
@@ -59,6 +64,7 @@ export type AuditAction =
   | "VECTOR_SYNC_RETRIED"
   | "TASK_CREATED"
   | "TASK_STATUS_CHANGED"
+  | "TASK_SIGNED_AND_COMPLETED"
   | "TASK_ASSIGNED"
   | "PERMISSION_CHANGED"
   | "USER_CREATED_BY_ADMIN"
@@ -88,6 +94,7 @@ const acceptedWbsPayloadSchema = z.object({
 }).strict();
 
 export async function createTask(input: {
+  requiresDeliverable?: boolean;
   projectId: string;
   title: string;
   description?: string;
@@ -107,6 +114,7 @@ export async function createTask(input: {
       title: input.title,
       description: input.description,
       requirementId: input.requirementId,
+      requiresDeliverable: input.requiresDeliverable ?? false,
     } });
     await recordAudit(tx, {
       actorId: input.actorId,
@@ -114,7 +122,7 @@ export async function createTask(input: {
       action: "TASK_CREATED",
       entityType: "Task",
       entityId: task.id,
-      after: { title: task.title, status: task.status, requirementId: task.requirementId },
+      after: { title: task.title, status: task.status, requirementId: task.requirementId, requiresDeliverable: task.requiresDeliverable },
       ip: input.ip,
       userAgent: input.userAgent,
     });
@@ -158,6 +166,8 @@ export async function recordAudit(tx: Prisma.TransactionClient, event: AuditEven
 export async function changeTaskStatus(input: {
   taskId: string;
   status: TaskStatus;
+  signaturePassword?: string;
+  signatureReason?: string;
   actualHours?: number;
   actorId: string;
 } & AuditRequestMetadata) {
@@ -170,6 +180,17 @@ export async function changeTaskStatus(input: {
     if (input.status === "DONE" && (!input.actualHours || input.actualHours <= 0 || !Number.isFinite(input.actualHours))) throw new BusinessError("Actual hours are required to complete a task");
     if (task.status === input.status) throw new BusinessError("Task status is unchanged");
     if (!canTransitionTaskStatus(task.status, input.status)) throw new BusinessError(`Invalid task status transition: ${task.status} -> ${input.status}`);
+    const completionEvidence = input.status === "DONE" && task.requiresDeliverable ? await tx.deliverable.findFirst({ where: { taskId: task.id, projectId: task.projectId, status: "APPROVED", document: { storageStatus: "AVAILABLE" } }, orderBy: [{ reviewedAt: "desc" }, { id: "asc" }], select: { id: true, version: true, reviewedById: true, document: { select: { id: true, sha256: true } } } }) : null;
+    if (input.status === "DONE" && task.requiresDeliverable && !completionEvidence) throw new BusinessError("请先上传并审批通过的交付物", 400);
+    if (input.status === "DONE") {
+      const signature = signatureSchema.safeParse({ signaturePassword: input.signaturePassword, signatureReason: input.signatureReason });
+      if (!signature.success) throw new BusinessError("请提供有效的签名密码和签名意图", 400);
+      const credentials = await tx.user.findUnique({ where: { id: input.actorId }, select: { passwordHash: true } });
+      if (!credentials?.passwordHash || !await verifyPassword(signature.data.signaturePassword, credentials.passwordHash)) {
+        console.warn("TASK_SIGNATURE_REJECTED", { actorId: input.actorId, taskId: input.taskId, createdAt: new Date().toISOString() });
+        throw new BusinessError("签名密码错误，请重新输入", 401);
+      }
+    }
     const changed = await tx.task.updateMany({
       where: { id: task.id, status: task.status, ...(actor.role === "MEMBER" ? { assigneeId: input.actorId } : {}) },
       data: {
@@ -182,11 +203,11 @@ export async function changeTaskStatus(input: {
     await recordAudit(tx, {
       actorId: input.actorId,
       projectId: task.projectId,
-      action: "TASK_STATUS_CHANGED",
+      action: input.status === "DONE" ? "TASK_SIGNED_AND_COMPLETED" : "TASK_STATUS_CHANGED",
       entityType: "Task",
       entityId: task.id,
       before: { status: task.status, actualHours: task.actualHours?.toString() ?? null, completedAt: task.completedAt?.toISOString() ?? null },
-      after: { status: updated.status, actualHours: updated.actualHours?.toString() ?? null, completedAt: updated.completedAt?.toISOString() ?? null },
+      after: { ...(input.status === "DONE" ? { signatureReason: input.signatureReason!, requiresDeliverable: !!task.requiresDeliverable, completionEvidence } : {}), status: updated.status, actualHours: updated.actualHours?.toString() ?? null, completedAt: updated.completedAt?.toISOString() ?? null },
       ip: input.ip,
       userAgent: input.userAgent,
     });

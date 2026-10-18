@@ -7,6 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 const state = vi.hoisted(() => ({ client: undefined as unknown as import("@prisma/client").PrismaClient, actor: null as { id: string; role: import("@prisma/client").Role } | null }));
 vi.mock("@/lib/prisma", () => ({ get prisma() { return state.client; } }));
 vi.mock("@/modules/auth/session", () => ({ getCurrentUser: async () => state.actor }));
+import { hashPassword } from "@/modules/auth/password";
 import { hasProjectAccess } from "@/modules/auth/project-access";
 import { projectScoped } from "@/modules/auth/project-scope-http";
 import { getProjectMembers, setProjectMember } from "@/modules/projects/members";
@@ -113,7 +114,10 @@ describe.sequential("project isolation and compliance exports in isolated MySQL"
     await expect(changeTaskStatus({ taskId: task, status: "IN_PROGRESS", actorId: member })).rejects.toMatchObject({ status: 403 });
     await assignTask({ taskId: task, assigneeId: member, actorId: owner });
     await changeTaskStatus({ taskId: task, status: "IN_PROGRESS", actorId: member });
-    await changeTaskStatus({ taskId: task, status: "DONE", actualHours: 2, actorId: member });
+    const signaturePassword = "Synthetic-signature-123";
+    const passwordHash = await hashPassword(signaturePassword);
+    await db.$transaction(tx => tx.user.update({ where: { id: member }, data: { passwordHash } }));
+    await changeTaskStatus({ taskId: task, status: "DONE", actualHours: 2, actorId: member, signaturePassword, signatureReason: "确认开发完成" });
     const before = await db.auditLog.count({ where: { entityId: task } });
     await expect(changeTaskStatus({ taskId: task, status: "TODO", actorId: member })).rejects.toMatchObject({ status: 403 });
     expect((await db.task.findUniqueOrThrow({ where: { id: task } })).status).toBe("DONE");

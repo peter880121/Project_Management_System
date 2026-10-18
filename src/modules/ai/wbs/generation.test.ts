@@ -25,12 +25,12 @@ describe("bounded WBS generation and failure diagnostics", () => {
     expect(result.suggestions).toHaveLength(3);
     expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PENDING", input: expect.objectContaining({ sourceTaskId: source.id, sourceTaskSnapshot: expect.objectContaining({ title: source.title }) }) }) }));
   });
-  it("rejects out-of-range task refinement output after one correction", async () => {
+  it("rejects out-of-range task refinement output after two corrections", async () => {
     mocks.source.mockResolvedValue({ id: "source-task", title: "调研", updatedAt: new Date(), requirement: null });
     mocks.invoke.mockResolvedValue({ content: valid });
     const result = await generateWbsSuggestions({ projectId: "synthetic-project", actorId: "synthetic-pm", request: "Synthetic refinement", sourceTaskId: "source-task" });
     expect(result).toMatchObject({ manualFallback: true, failureCode: "MODEL_RESPONSE_INVALID", suggestions: [] });
-    expect(mocks.invoke).toHaveBeenCalledTimes(2);
+    expect(mocks.invoke).toHaveBeenCalledTimes(3);
     expect(mocks.create).not.toHaveBeenCalled();
   });
   it("corrects invalid model output once and only persists pending suggestions", async () => {
@@ -41,12 +41,12 @@ describe("bounded WBS generation and failure diagnostics", () => {
     expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PENDING", input: expect.objectContaining({ correctionAttempts: 1 }) }) }));
     expect(mocks.audit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "AI_WBS_GENERATED" }));
   });
-  it("stops after two invalid responses and records a safe failure code without writing suggestions", async () => {
+  it("stops after three invalid responses and records a safe failure code without writing suggestions", async () => {
     mocks.invoke.mockResolvedValue({ content: "Invalid model prose" });
     const result = await generateWbsSuggestions({ projectId: "synthetic-project", actorId: "synthetic-pm", request: "Synthetic login acceptance" });
     expect(result).toMatchObject({ suggestions: [], manualFallback: true, failureCode: "MODEL_RESPONSE_INVALID" });
-    expect(mocks.invoke).toHaveBeenCalledTimes(2); expect(mocks.create).not.toHaveBeenCalled();
-    expect(mocks.audit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "AI_WBS_GENERATION_FAILED", after: expect.objectContaining({ reason: "MODEL_RESPONSE_INVALID", correctionAttempts: 1 }) }));
+    expect(mocks.invoke).toHaveBeenCalledTimes(3); expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "AI_WBS_GENERATION_FAILED", after: expect.objectContaining({ reason: "MODEL_RESPONSE_INVALID", correctionAttempts: 2 }) }));
   });
   it("does not retry authentication failures or expose provider response text", async () => {
     mocks.invoke.mockRejectedValue(Object.assign(new Error("provider-secret-response"), { status: 401 }));

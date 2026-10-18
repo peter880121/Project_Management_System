@@ -1,14 +1,13 @@
-import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { expect, test } from "@playwright/test";
 import { createSessionToken } from "../src/modules/auth/session-token";
 
 const db = new PrismaClient();
 let projectId: string; let taskId: string;
-test.use({ channel: process.env.ACCEPTANCE_EDGE === "1" ? "msedge" : undefined });
+test.use({ trace: "off", channel: process.env.ACCEPTANCE_EDGE === "1" ? "msedge" : undefined });
 test.beforeAll(async ({ request }) => {
   const cookie = `medpm_session=${createSessionToken("00000000-0000-4000-8000-000000000002", Date.now() + 3_600_000)}`;
-  const response = await request.post("/api/projects", { headers: { cookie }, data: { name: `Synthetic compact board ${randomUUID()}` } });
+  const response = await request.post("/api/projects", { headers: { cookie }, data: { name: "Synthetic 医疗软件交付看板" } });
   expect(response.status()).toBe(201); projectId = (await response.json()).data.id;
   await db.$transaction(tx => tx.projectMember.create({ data: { projectId, userId: "00000000-0000-4000-8000-000000000003" } }));
   taskId = (await db.task.findFirstOrThrow({ where: { projectId, title: "召开项目启动会" } })).id;
@@ -22,6 +21,12 @@ test("four aligned columns scroll independently; mobile pans horizontally withou
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/projects/${projectId}/board`);
   await expect(page.getByRole("link", { name: "召开项目启动会", exact: true })).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(2);
+  const todo = page.getByRole("region", { name: "待办列", exact: true });
+  await expect(todo.getByRole("button", { name: /项目启动/ })).toHaveAttribute("aria-expanded", "true");
+  await expect(todo.getByRole("button", { name: /需求与蓝图/ })).toHaveAttribute("aria-expanded", "false");
+  await page.screenshot({ path: "test-results/ia-board-collapsed.png" });
+  while (await todo.getByRole("button", { expanded: false }).count()) await todo.getByRole("button", { expanded: false }).first().click();
   await expect(page.getByRole("article")).toHaveCount(14);
   const board = page.getByRole("region", { name: "任务看板", exact: true });
   const geometry = await board.evaluate(element => Array.from(element.children).map(column => column.getBoundingClientRect().toJSON()));
@@ -50,6 +55,20 @@ test("four aligned columns scroll independently; mobile pans horizontally withou
   await page.screenshot({ path: "test-results/board-compact-narrow.png" });
 });
 
+test("returning a task to a collapsed phase expands its destination and highlights it", async ({ page }) => {
+  expect((await page.request.patch(`/api/tasks/${taskId}`, { data: { status: "IN_PROGRESS" } })).status()).toBe(200);
+  await page.goto(`/projects/${projectId}/board`);
+  const todo = page.getByRole("region", { name: "待办列", exact: true });
+  const toggle = todo.getByRole("button", { name: /项目启动/ });
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await toggle.click();
+  await page.getByRole("region", { name: "进行中列", exact: true }).locator(`[data-task-card="${taskId}"]`).getByRole("button", { name: "退回待办", exact: true }).click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(todo.locator(`[data-task-card="${taskId}"]`)).toBeVisible();
+  await expect(page.locator(`#board-task-${taskId}`)).toHaveClass(/ring-teal-500/);
+  await page.screenshot({ path: "test-results/ia-board-moved-highlight.png" });
+});
+
 test("detail remains open and refreshes both assignment and state; icons do not bubble", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/projects/${projectId}/board`);
@@ -76,6 +95,9 @@ test("detail remains open and refreshes both assignment and state; icons do not 
   const completed = page.waitForResponse(response => response.request().method() === "PATCH" && new URL(response.url()).pathname === `/api/tasks/${taskId}`);
   const refreshed = page.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname === `/api/tasks/${taskId}`);
   await drawer.getByRole("button", { name: "完成", exact: true }).click();
+  const signature = page.getByRole("dialog", { name: "电子签名", exact: true });
+  await signature.getByLabel("签名密码", { exact: true }).fill(process.env.LOCAL_DEV_SEED_PASSWORD!);
+  await signature.getByRole("button", { name: "确认签署", exact: true }).click();
   expect((await completed).status()).toBe(200);
   expect((await refreshed).status()).toBe(200);
   await expect(drawer.getByText("已完成", { exact: true })).toBeVisible();
@@ -111,9 +133,12 @@ test("skeletons precede data; failed saves retain drawer and input with an error
   const hours = drawer.getByLabel("实际工时 召开项目启动会", { exact: true });
   await hours.fill("6");
   await drawer.getByRole("button", { name: "完成", exact: true }).click();
-  await expect(drawer.getByRole("alert").filter({ hasText: "Synthetic update failure" }).first()).toBeVisible();
+  const signature = page.getByRole("dialog", { name: "电子签名", exact: true });
+  await signature.getByLabel("签名密码", { exact: true }).fill(process.env.LOCAL_DEV_SEED_PASSWORD!);
+  await signature.getByRole("button", { name: "确认签署", exact: true }).click();
+  await expect(signature.getByRole("alert").filter({ hasText: "Synthetic update failure" }).first()).toBeVisible();
   await expect(hours).toHaveValue("6");
-  await expect(drawer).toBeVisible();
+  await expect(signature).toBeVisible();
 });
 
 test("late detail responses cannot overwrite a different task and small pointer drags do not open cards", async ({ page }) => {

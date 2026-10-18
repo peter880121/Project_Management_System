@@ -30,6 +30,30 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => db.$disconnect());
 
+test("confirmed WBS adoption reveals and highlights a task in a collapsed destination phase", async ({ page, context, baseURL }) => {
+  const fixture = await db.$transaction(async tx => {
+    const project = await tx.project.create({ data: { name: "Synthetic 阶段内采纳验收", ownerId: pm } });
+    const parent = await tx.task.create({ data: { projectId: project.id, title: "蓝图方案确认", description: "所属阶段：需求与蓝图" } });
+    await tx.task.create({ data: { projectId: project.id, title: "项目初验", description: "所属阶段：验收与运维" } });
+    const suggestion = await tx.aiSuggestion.create({ data: { projectId: project.id, type: "WBS", input: { sourceTaskId: parent.id, retrievalHitIds: [], source: "synthetic-e2e-fixture" }, output: { title: "移交材料核对", description: "所属阶段：验收与运维\nSynthetic handover checklist", estimateHours: 4, suggestedRole: "PM", dependencyIds: [], dependencyTitles: [] } } });
+    return { project, parent, suggestion };
+  });
+  await identity(context, baseURL!);
+  await page.goto(`/projects/${fixture.project.id}/board`);
+  const todo = page.getByRole("region", { name: "待办列", exact: true });
+  const destination = todo.getByRole("button", { name: /验收与运维/ });
+  await expect(destination).toHaveAttribute("aria-expanded", "false");
+  await page.locator(`[data-task-card="${fixture.parent.id}"]`).getByRole("button", { name: "✨ 细化子任务", exact: true }).click();
+  const drawer = page.getByRole("dialog", { name: "细化子任务", exact: true });
+  await drawer.locator(`#suggestion-${fixture.suggestion.id}`).getByRole("button", { name: "采纳为任务", exact: true }).click();
+  await expect(destination).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  const created = await db.task.findFirstOrThrow({ where: { projectId: fixture.project.id, title: "移交材料核对" } });
+  await expect(todo.locator(`[data-task-card="${created.id}"]`)).toBeVisible();
+  await expect(todo.locator(`[data-task-card="${created.id}"]`)).toBeInViewport({ ratio: 0.9 });
+  await expect(page.locator(`#board-task-${created.id}`)).toHaveClass(/ring-teal-500/);
+});
+
 test("task drawer shows prompt and audit warning; real acceptance retains sourceTaskId", async ({ page, context, baseURL }) => {
   await identity(context, baseURL!);
   await page.goto(`/projects/${projectId}/board`);
@@ -73,11 +97,13 @@ test("late task A response never appears in task B drawer", async ({ page, conte
   const sent = page.waitForRequest(request => request.method() === "POST" && request.url().includes("/ai/wbs"));
   await page.getByRole("button", { name: "生成 WBS 建议", exact: true }).click();
   expect((await sent).postDataJSON().sourceTaskId).toBe(a);
+  const aborted = page.waitForEvent("requestfailed", request => request.method() === "POST" && request.url().includes("/ai/wbs"));
   await page.keyboard.press("Escape");
+  release();
+  await aborted;
+  const loadedB = page.waitForResponse(response => response.request().method() === "GET" && response.url().includes(`/ai/wbs?sourceTaskId=${b}`));
   await card("业务需求调研 B").getByRole("button", { name: "✨ 细化子任务", exact: true }).click();
-  const returned = page.waitForResponse(response => response.request().method() === "POST" && response.url().includes("/ai/wbs"));
-  const refreshed = page.waitForResponse(response => response.request().method() === "GET" && response.url().includes(`/ai/wbs?sourceTaskId=${a}`));
-  release(); await returned; await refreshed;
+  await loadedB;
   await expect(page.getByRole("dialog").getByLabel("需求描述", { exact: true })).toHaveValue(/业务需求调研 B/);
   await expect(page.getByText("LATE_TASK_A_ONLY", { exact: true })).toHaveCount(0);
 });

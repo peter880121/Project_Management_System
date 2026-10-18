@@ -7,6 +7,7 @@ import { documentReaders } from "@/modules/documents/http";
 import { chunkSource } from "@/modules/documents/rag-repositories";
 import { hasProjectAccess, visibleProjectWhere } from "@/modules/auth/project-access";
 import { prisma } from "@/lib/prisma";
+import { canReadRoles } from "@/modules/assets/validation";
 import { PageBreadcrumbs } from "@/components/layout/page-breadcrumbs";
 import { projectBreadcrumbs } from "@/components/layout/breadcrumbs";
 export const dynamic = "force-dynamic";
@@ -16,6 +17,7 @@ export default async function ChunkSourcePage({ params }: { params: Promise<{ pr
   if (!z.uuid().safeParse(projectId).success || !z.uuid().safeParse(chunkId).success) notFound();
   if (!await hasProjectAccess(user!, projectId)) notFound();
   const chunk = await chunkSource(chunkId); if (!chunk || chunk.projectId !== projectId) notFound();
+  if (!canReadRoles(chunk.document.visibleRoles, user!.role)) notFound();
   const project = await prisma.project.findFirst({ where: { id: projectId, ...visibleProjectWhere(user!) }, select: { id: true, name: true } });
   if (!project) notFound();
   return <main className="mx-auto max-w-4xl space-y-4 p-8">

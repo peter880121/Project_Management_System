@@ -1,0 +1,42 @@
+import { createServer } from "node:http";
+
+/** Protocol fixture only: real LangChain HTTP streaming, no external model or real patient data. */
+export async function startAiStreamFixture() {
+  let mode = "normal"; let attempts = 0; let cancelled = 0; let started = 0; const waiting = new Set();
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/__fixture/control") {
+      const nextMode = url.searchParams.get("mode") || "normal";
+      if (nextMode !== mode && nextMode !== "release") attempts = 0;
+      mode = nextMode;
+      if (mode === "release") { for (const release of waiting) release(); waiting.clear(); }
+      response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ started, cancelled })); return;
+    }
+    if (url.pathname !== "/v1/chat/completions") { response.writeHead(404).end(); return; }
+    let body = ""; for await (const bytes of request) body += bytes;
+    const data = JSON.parse(body); const isWbs = data.messages.some(message => message.content?.includes('"tasks"'));
+    const result = isWbs ? { tasks: ["确认交付范围", "编制验收用例", "复核追溯证据"].map((title, index) => ({ title, description: "合成建议：明确交付物与验收条件，待项目经理人工确认。", estimateHours: index + 2, suggestedRole: "QA", dependencies: [], sourceChunkIds: [] })) } : { overview: "合成合规检查：已核对当前任务的需求、测试与审计证据，结论待人工复核。", keyChanges: [], anomalies: [], reviewItems: [] };
+    if (!data.stream) { response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ id: "synthetic-chat", object: "chat.completion", created: 0, model: "synthetic-stream", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(result) } }] })); return; }
+    const currentMode = mode; const attempt = isWbs ? ++attempts : 0;
+    const jsonOnly = data.response_format?.type === "json_object";
+    const correcting = ["dirty-retry", "retry-hold-1", "retry-hold-2", "invalid"].includes(currentMode);
+    const invalid = isWbs && correcting && (attempt === 1 || currentMode === "invalid" || currentMode === "retry-hold-2" && attempt === 2);
+    if (isWbs && currentMode === "dirty-retry") for (const task of result.tasks) { task.title = `<PUBLIC_PREVIEW>${task.title}</PUBLIC_PREVIEW>`; task.description = `公开<internal>synthetic-private-content</internal>交付建议，待人工确认。`; }
+    started += 1; let finished = false; let closed = false; let release;
+    response.on("close", () => { closed = true; if (!finished) cancelled += 1; release?.(); if (release) waiting.delete(release); });
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    const send = content => { if (!closed) response.write(`data: ${JSON.stringify({ id: "synthetic-chat", object: "chat.completion.chunk", created: 0, model: "synthetic-stream", choices: [{ index: 0, delta: { content }, finish_reason: null }] })}\n\n`); };
+    const preview = "<PUBLIC_PREVIEW>正在核对当前任务的交付范围与可追溯证据。将结合验收条件，整理可执行、可复核的建议。这里展示的是公开执行说明，最终结构化结果仍需人工确认。";
+    const publicText = correcting ? preview.replace("正在核对", "<PUBLIC_PREVIEW><internal>synthetic-private-content</internal>正在核对") : preview;
+    if (!jsonOnly) for (let offset = 0; offset < publicText.length && !closed; offset += 5) { send(publicText.slice(offset, offset + 5)); await new Promise(resolve => setTimeout(resolve, 60)); }
+    response.flushHeaders();
+    if (mode !== "release" && (currentMode === "hold" || jsonOnly && (currentMode === "dirty-retry" || currentMode === "retry-hold-1" && attempt === 2 || currentMode === "retry-hold-2" && attempt === 3)) && !closed) await new Promise(resolve => { release = resolve; waiting.add(resolve); });
+    if (closed) return;
+    await new Promise(resolve => setTimeout(resolve, 800));
+    const payload = invalid ? '{"tasks":[{"estimateHours":"invalid"}]}' : JSON.stringify(result);
+    send(`${jsonOnly ? "" : "<RESULT_JSON>"}${payload}`);
+    if (!closed) { finished = true; response.end("data: [DONE]\n\n"); }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  return { url: `http://127.0.0.1:${server.address().port}`, close: () => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); } };
+}

@@ -9,8 +9,11 @@ import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 import { containsLikelySensitiveInput, generateWbsSuggestions } from "@/modules/ai/wbs/service";
 import { storedDocumentEvidence } from "@/modules/ai/wbs/types";
 import { dependencyIds, suggestionTitle } from "@/modules/ai/wbs/review-state";
-import { wbsFailureMessage } from "@/modules/ai/wbs/failure";
+import { wbsFailureMessage, WbsStructuredOutputError } from "@/modules/ai/wbs/failure";
 import { projectErrorResponse } from "@/modules/projects/http";
+
+import { generationId, generationResponse, wantsStream } from "@/modules/ai/streaming/response";
+import { loadAiTask } from "@/modules/ai/task-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,8 +32,10 @@ async function GETHandler(_request: Request, context: { params: Promise<{ projec
   if (!z.uuid().safeParse(projectId).success) return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
   const sourceTaskId = new URL(_request.url).searchParams.get("sourceTaskId");
   if (sourceTaskId && !z.uuid().safeParse(sourceTaskId).success) return NextResponse.json({ error: "Invalid source task id" }, { status: 400 });
+  const batchId = new URL(_request.url).searchParams.get("generationId");
+  if (batchId && !z.uuid().safeParse(batchId).success) return NextResponse.json({ error: "Invalid generation id" }, { status: 400 });
   const suggestions = await prisma.aiSuggestion.findMany({
-    where: { projectId, type: "WBS", status: "PENDING", ...(sourceTaskId ? { input: { path: "$.sourceTaskId", equals: sourceTaskId } } : {}) },
+    where: { projectId, type: "WBS", status: "PENDING", ...(batchId ? { AND: [{ input: { path: "$.batchId", equals: batchId } }] } : {}), ...(sourceTaskId ? { input: { path: "$.sourceTaskId", equals: sourceTaskId } } : {}) },
     select: { id: true, input: true, output: true, createdAt: true },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 90,
@@ -88,6 +93,25 @@ async function POSTHandler(request: Request, context: { params: Promise<{ projec
   const parsed = generateSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Enter a requirement and confirm it contains synthetic data only", issues: parsed.error.issues }, { status: 400 });
   if (containsLikelySensitiveInput(parsed.data.request)) return NextResponse.json({ error: "Potential patient or contact identifiers found. Remove them and use synthetic data only." }, { status: 400 });
+  if (wantsStream(request)) {
+    try {
+      if (parsed.data.sourceTaskId) {
+        const source = await loadAiTask(projectId, parsed.data.sourceTaskId, "wbs");
+        if (containsLikelySensitiveInput([source.title, source.description, source.requirement?.title, source.requirement?.content].filter(Boolean).join("\n"))) return NextResponse.json({ error: "任务上下文可能含敏感信息，请仅使用合成数据" }, { status: 400 });
+      }
+      const id = generationId(request);
+      return generationResponse(request, { generationId: id, projectId, actorId: user!.id, taskId: parsed.data.sourceTaskId, ...getAuditRequestMetadata(request) }, async stream => {
+        const result = await generateWbsSuggestions({ projectId, actorId: user!.id, request: parsed.data.request, sourceTaskId: parsed.data.sourceTaskId, ...getAuditRequestMetadata(request) }, stream);
+        if (result.manualFallback && result.failureCode === "MODEL_RESPONSE_INVALID") throw new WbsStructuredOutputError();
+        return {
+          data: result.suggestions.map(suggestion => ({ ...suggestion, history: result.historicalTasks, documentEvidence: result.documentEvidence })),
+          degraded: result.degraded, model: result.model, modelDurationMs: result.modelDurationMs,
+          manualFallback: result.manualFallback, failureCode: result.failureCode,
+          message: result.manualFallback ? wbsFailureMessage(result.failureCode) : undefined,
+        };
+      });
+    } catch (error) { return projectErrorResponse(error); }
+  }
   let result: Awaited<ReturnType<typeof generateWbsSuggestions>>;
   try {
     result = await generateWbsSuggestions({ projectId, actorId: user!.id, request: parsed.data.request, sourceTaskId: parsed.data.sourceTaskId, ...getAuditRequestMetadata(request) });

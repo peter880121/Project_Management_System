@@ -20,7 +20,7 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
   return <main className="mx-auto min-h-screen max-w-7xl px-6 py-10">
     <PageBreadcrumbs pathname="/projects" items={[{ label: "项目" }]} />
     <div className="flex flex-wrap items-center justify-between gap-5"><div><p className="text-sm font-medium text-teal-700">交付总览</p><h1 className="mt-2 text-3xl font-semibold">项目看板</h1><p className="mt-3 text-slate-600">先看项目所处阶段，再进入项目跟进任务交付。</p></div>{user!.role === "PM" && <Link href="/projects/new" className="inline-flex rounded-md bg-teal-800 px-4 py-2 font-medium text-white">创建项目</Link>}</div>
-    {created && <p role="status" className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">项目《{created.name}》创建成功，项目列表已更新。<Link href={`/projects/${created.id}/board`} className="text-link ml-3 font-semibold underline">进入项目 →</Link></p>}
+    {created && <p role="status" className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">项目《{created.name}》创建成功，项目列表已更新。<Link href={`/projects/${created.id}/members?onboarding=1`} className="text-link ml-3 font-semibold underline">配置项目成员 →</Link></p>}
     <section aria-label="项目状态概览" className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
       {Object.entries(projectStatuses).map(([key, item]) => <Link key={key} href={`/projects?status=${key}`} aria-current={status === key ? "page" : undefined} className={`block rounded-xl border p-5 ${item.color} ${status === key ? "ring-2 ring-teal-700 ring-offset-2" : ""}`}><p className="text-sm font-medium">{item.label}</p><p className="mt-2 text-3xl font-semibold">{projects.filter(project => project.status === key).length}</p></Link>)}
     </section>

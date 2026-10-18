@@ -1,13 +1,14 @@
 import { STANDARD_PROJECT_TASKS } from "@/modules/projects/templates";
+import { taskPhase } from "@/modules/projects/task-phases";
+export { taskPhase } from "@/modules/projects/task-phases";
+import type { TaskSignature } from "@/modules/tasks/signature";
 export type TaskStatus = "TODO" | "IN_PROGRESS" | "DONE" | "BLOCKED";
-export type BoardTask = { id: string; title: string; description: string | null; status: TaskStatus; assigneeId: string | null; assignee: { id: string; name: string } | null; requirement: { id: string; title: string } | null; dependencies?: { dependsOn: { id: string; title: string; status: TaskStatus } }[] };
+export type BoardTask = { requiresDeliverable?: boolean; deliverables?: { id: string }[]; updatedAt?: string; id: string; title: string; description: string | null; status: TaskStatus; assigneeId: string | null; assignee: { id: string; name: string } | null; requirement: { id: string; title: string } | null; dependencies?: { dependsOn: { id: string; title: string; status: TaskStatus } }[] };
 export type TaskDetail = Omit<BoardTask, "requirement"> & { estimateHours: string | null; actualHours: string | null; requirement: { id: string; title: string; content: string; testCases: { id: string; title: string; status: string }[] } | null; audits: { id: string; action: string; createdAt: string; actor: { name: string }; before: unknown; after: unknown }[] };
 export type UserOption = { id: string; name: string; email: string };
-export type TaskChange = { status: TaskStatus; actualHours?: number } | { assigneeId: string | null };
+export type TaskCompletion = { status: "DONE"; actualHours: number } & TaskSignature;
+export type TaskChange = { status: Exclude<TaskStatus, "DONE"> } | TaskCompletion | { assigneeId: string | null } | { requiresDeliverable: boolean; expectedUpdatedAt: string };
 export const taskColumns: { status: TaskStatus; title: string; dot: string }[] = [{ status: "TODO", title: "待办", dot: "bg-slate-400" }, { status: "IN_PROGRESS", title: "进行中", dot: "bg-sky-500" }, { status: "BLOCKED", title: "受阻", dot: "bg-amber-500" }, { status: "DONE", title: "已完成", dot: "bg-emerald-500" }];
-export function taskPhase(description: string | null): string | null {
-  return description?.split("\n").find(line => line.startsWith("所属阶段："))?.slice("所属阶段：".length).trim() || null;
-}
 export function taskStatusOptions(status: TaskStatus, role: string): TaskStatus[] {
   if (status === "TODO") return ["IN_PROGRESS", "BLOCKED"];
   if (status === "IN_PROGRESS") return ["TODO", "BLOCKED", "DONE"];

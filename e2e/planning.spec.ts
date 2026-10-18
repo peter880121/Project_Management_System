@@ -25,6 +25,7 @@ test("PM maintains planning/capacity, scans cross-project overload, and QA remai
   test.setTimeout(90000);
   expect((await page.request.post("/api/auth/login", { data: { email: pmEmail, password } })).status()).toBe(200);
   await page.goto(`/projects/${projectId}/planning`);
+  await page.getByRole("button", { name: "表格视图", exact: true }).click();
   const task = page.locator("article").filter({ has: page.getByRole("link", { name: title, exact: true }) });
   await task.getByLabel(`开始日期 ${title}`, { exact: true }).fill(week); await task.getByLabel(`截止日期 ${title}`, { exact: true }).fill(due); await task.getByLabel(`预计工时 ${title}`, { exact: true }).fill("30");
   await task.getByRole("button", { name: "保存排期", exact: true }).click();
@@ -39,6 +40,7 @@ test("PM maintains planning/capacity, scans cross-project overload, and QA remai
   expect((await page.request.post("/api/auth/logout")).status()).toBe(200);
   expect((await page.request.post("/api/auth/login", { data: { email: qaEmail, password } })).status()).toBe(200);
   await page.goto(`/projects/${projectId}/planning`);
+  await page.getByRole("button", { name: "表格视图", exact: true }).click();
   await expect(page.getByLabel(`预计工时 ${title}`, { exact: true })).toBeDisabled();
   expect((await page.request.patch(`/api/tasks/${taskId}/schedule`, { data: { expectedVersion: 1, plannedStartDate: week, dueDate: due, estimateHours: 10, dependencyIds: [] } })).status()).toBe(403);
   expect((await page.request.put(`/api/users/${memberId}/capacity`, { data: { weekStart: week, hours: 100, expectedVersion: 1 } })).status()).toBe(403);

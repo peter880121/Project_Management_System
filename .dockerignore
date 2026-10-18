@@ -5,6 +5,16 @@ node_modules
 .venv
 .corepack-cache
 coverage
+test-results
+playwright-report
+tests
+e2e
+**/*.test.ts
+scripts/test-*.mjs
+scripts/prepare-demo-*.mjs
+*.log
+*.tsbuildinfo
+.pnpm-store
 .env
 .env.*
 !.env.example

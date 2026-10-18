@@ -10,6 +10,9 @@ export function businessErrorResponse(error: unknown) {
   if (error instanceof BusinessError || error instanceof ProjectAccessError) {
     return Response.json({ error: error.message }, { status: error.status });
   }
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028") {
+    return Response.json({ error: "系统繁忙，请重试" }, { status: 503 });
+  }
   if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2034", "P2002"].includes(error.code)) {
     return Response.json({ error: "数据存在并发冲突，请刷新后重试" }, { status: 409 });
   }
