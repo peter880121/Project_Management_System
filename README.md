@@ -35,9 +35,13 @@ flowchart LR
 - **事务审计**：状态变更、权限调整、AI 采纳/拒绝、数据导出与对应审计同事务提交。审计失败即回滚业务写入；下载路径未成功记录导出审计，不释放文件字节。记录包含操作者、实体、before/after、IP、User-Agent 和 UTC 毫秒时间戳。
 - **电子签名**：任务进入 DONE 必须重新输入当前用户密码，并从固定枚举中声明签名意图。事务内 bcrypt 校验成功后，更新任务并记录 `TASK_SIGNED_AND_COMPLETED`；密码不进入审计、日志或持久化存储。密码错误返回 401，事务超时返回可重试的 503。
 - **审计不可改写**：MySQL 触发器拒绝 `AuditLog` 的行级 UPDATE 和 DELETE，保留原始历史；导出文件通过 SHA-256 验证完整性。
-- **权限先于业务**：ADMIN、PM、MEMBER、QA 的 RBAC 与项目成员授权共同生效；关键写入在事务内复核角色和访问权，阻断生成期间撤权后的提交。
+- **权限先于业务**：ADMIN、PM、MEMBER、QA 的 RBAC 与项目成员授权共同生效；PMO 独立提供全局统计只读权限。关键写入在事务内复核角色和访问权，阻断生成期间撤权后的提交。
 
 控制边界：触发器保护应用与常规 SQL 写入路径，不构成抵御数据库 DDL 管理员的 WORM 存储。电子签名、审计与追溯能力不等同于已完成 GxP / 21 CFR Part 11 的全系统验证。
+
+### PMO 决策中心：聚合业务事实，保留权限边界
+
+`/dashboard` 汇总项目状态、逾期任务、签名证据缺口、成员未完成任务量、项目完成率与近六个月交付趋势。ADMIN / 独立 PMO 角色查看全局，PM 仅查看本人负责或有效参与的项目；筛选条件始终与权限范围相交。Prisma groupBy/count 完成数据库聚合，签名缺口使用参数化反关联查询匹配本次完成证据。香港自然月转换为 UTC 半开区间，避免月界错位。Tailwind 与原生 SVG 提供图表、数据表、空态和错误恢复，无新增图表依赖。实现与测试见 [PMO 决策中心](docs/pmo-dashboard.md)。
 
 ### AI 原生：先展示预览，再提交可审核的结构化结果
 
@@ -70,23 +74,21 @@ flowchart LR
 
 | 层级 | 策略与覆盖 |
 |---|---|
-| Vitest 单元测试 | 437 项：权限矩阵、输入与引用校验、依赖图、规则降级、SSE 任意分片、中文解码、动画清理、错误脱敏 |
+| Vitest 单元测试 | 490 项：权限矩阵、输入与引用校验、依赖图、规则降级、SSE 任意分片、中文解码、动画清理、错误脱敏、香港自然月边界及图表极端值 |
 | 真实 MySQL 集成测试 | 使用隔离测试库或独立合成夹具，执行真实 Prisma 事务；注入审计写入失败，验证任务完成、AI 建议、权限、排期及 Session 修改整体回滚；验证并发竞争只产生一次有效提交、迁移结构回滚及审计历史保留 |
-| Playwright 浏览器测试 | 97 项用例覆盖角色工作流、签名、需求追溯、甘特图 409 回退、上传/导出和请求竞态；流式专项通过合成模型协议服务，实际经过 LangChain HTTP 流、应用和 MySQL，验证增量显示、断连取消、撤权阻断及待确认落库 |
+| Playwright 浏览器测试 | 常规组 103 项通过、独立流式组 8 项通过，覆盖角色工作流、签名、需求追溯、甘特图回退、归档冻结、PMO 聚合权限、上传/导出和请求竞态；流式专项通过合成模型协议服务，实际经过 LangChain HTTP 流、应用和 MySQL，验证增量显示、断连取消、撤权阻断及待确认落库 |
 
-最近验证（2026-10-18）：单元测试 **437 通过**；新增流式 MySQL 集成测试 **6 通过**；全量 E2E **89 通过、8 按配置跳过**，其中 **4 项流式协议专项已由独立 runner 全部验证通过**，其余 4 项依赖未启用的文档/风险 worker。详见[流式验证记录](docs/ai-streaming.md)与[电子签名验证记录](docs/task-signatures.md)。用例规模不等于一次执行全部通过。
+最近验证（2026-10-19）：单元测试 **490 通过**；真实 MySQL 集成测试 **160 通过、2 项 live 测试跳过**；E2E **111 项通过**（103 项常规 + 8 项独立流式）。常规组暂跳过的 8 项流式测试已在独立组全部执行，仍未启用的是 4 项既有 Worker E2E。详见 [PMO 验证与查询设计](docs/pmo-dashboard.md)、[归档冻结设计](docs/project-closure.md)及[流式验证记录](docs/ai-streaming.md)。
 
 ```bash
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm exec vitest run --config vitest.integration.config.ts
 pnpm exec playwright install chromium
-pnpm test:e2e
-node scripts/test-ai-streaming-e2e.mjs
+node scripts/test-project-ia.mjs
 ```
 
-MySQL 集成测试需要本地 `DATABASE_URL`；会创建隔离数据库的套件还需要 `MYSQL_ROOT_PASSWORD`。`medpm_demo_*` 演示库受保护，E2E 和集成测试必须使用独立测试环境的 `DATABASE_URL`。HTTP 集成、全量 E2E 与流式 runner 按顺序运行，避免多个 Next.js 服务争用 `.next`。真实存储用例需要可访问 MinIO；云端解析及 worker 场景按各模块文档配置。
+验收脚本读取本地 `DATABASE_URL`、`MYSQL_ROOT_PASSWORD`，为每轮创建独立合成数据库及 Next.js 构建目录，顺序运行集成、常规 E2E 和独立流式组；不会向 `medpm_demo_*` 演示库写入测试夹具。浏览器存储测试使用 S3 协议夹具，流式测试使用合成模型协议服务；真实供应商、云端解析及 Worker 联调按各模块文档配置，不与夹具验证混淆。
 
 ## 本地运行
 

@@ -141,5 +141,5 @@ describe.sequential("durable MinerU jobs with isolated MySQL", () => {
     sql(readFileSync(directory + "migration.sql", "utf8"));
     sql(readFileSync(chunksDirectory + "migration.sql", "utf8"));
     expect((await db.document.findUniqueOrThrow({ where: { id: documentId } })).parseStatus).toBe("NOT_REQUESTED");
-  });
+  }, 15000); // Multiple real MySQL DDL round trips; not a request-latency assertion.
 });

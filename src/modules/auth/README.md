@@ -6,7 +6,7 @@ The cookie is signed, not encrypted: a person holding it can decode and read the
 
 API handlers call `getCurrentUser` and `requireRole`; role values supplied by clients are never trusted. `requireRole` returns 401 for a missing session and 403 for a logged-in user without the required role. Keep these checks before parsing or returning protected data.
 
-Roles: ADMIN, PM, MEMBER, QA.
+Roles: ADMIN, PM, MEMBER, QA, PMO. PMO has global read-only dashboard aggregation access, not ADMIN's project, document, approval or user-management privileges. Self-profile/session and password maintenance remain available.
 
 Login policy for Phase 2a: only wrong-password attempts on ACTIVE accounts count. The fifth failed attempt writes a 15-minute lock immediately while still returning the same generic credentials error. Attempts during an active lock are audited but do not increment the counter or extend the lock. When a later login request observes an expired lock, it explicitly clears the stale count before processing the new attempt. Failed-login audit uses the matched account ID when the email exists and the system user ID otherwise; every event carries the masked `targetEmail`.
 

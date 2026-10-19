@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ClipboardList, FolderKanban, House, ShieldCheck, UserRound, UsersRound, X } from "lucide-react";
+import { ChartNoAxesCombined, ClipboardList, FolderKanban, House, ShieldCheck, UserRound, UsersRound, X } from "lucide-react";
 import { NavigationLogout } from "@/components/navigation-logout";
 import { isActiveNavigation, sidebarItems, type LayoutUser } from "./navigation";
 import type { Ref } from "react";
 
-const icons = { home: House, projects: FolderKanban, audit: ClipboardList, users: UsersRound, profile: UserRound };
+const icons = { home: House, dashboard: ChartNoAxesCombined, projects: FolderKanban, audit: ClipboardList, users: UsersRound, profile: UserRound };
 export function AppSidebar({ user, pathname, open, onNavigate, onClose, panelRef }: { user: LayoutUser; pathname: string; open: boolean; onNavigate: () => void; onClose: () => void; panelRef: Ref<HTMLElement> }) {
   return <>
     {open && <button type="button" aria-label="关闭导航遮罩" onClick={onClose} className="fixed inset-0 z-40 rounded-none border-0 bg-slate-950/40 p-0 lg:hidden" />}

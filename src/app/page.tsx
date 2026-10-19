@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/modules/auth/session";
 import { LandingPage } from "@/components/landing-page";
 
@@ -13,6 +14,7 @@ const agents = [
 export default async function Home() {
   const user = await getCurrentUser();
   if (!user) return <LandingPage />;
+  if (user.role === "PMO") redirect("/dashboard");
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-6 py-16">
@@ -21,6 +23,7 @@ export default async function Home() {
       <h1 className="mt-5 max-w-3xl text-4xl font-semibold tracking-tight sm:text-5xl">让医疗软件交付更可追溯，也更可控。</h1>
       <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-600">AI 提供建议，团队负责确认。每项关键决策都为审计与追溯留出位置。</p>
       <Link href="/projects" className="ml-3 mt-6 inline-flex rounded-md bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900">打开任务看板</Link>
+      {["ADMIN", "PM"].includes(user.role) && <Link href="/dashboard" className="ml-3 mt-6 inline-flex rounded-md border border-teal-200 bg-white px-4 py-2 text-sm font-semibold text-teal-800">打开数据决策中心</Link>}
       <section aria-label="AI agents" className="mt-12 grid gap-5 md:grid-cols-3">
         {agents.map((agent) => (
           <article key={agent.title} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

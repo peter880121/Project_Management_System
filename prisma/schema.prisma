@@ -12,6 +12,7 @@ enum Role {
   PM
   MEMBER
   QA
+  PMO
 }
 
 enum UserStatus {
@@ -170,6 +171,7 @@ model Project {
   complianceExports ComplianceExport[]
 
   @@index([ownerId, status])
+  @@index([status, archivedAt])
 }
 
 model ProjectAcceptance {
@@ -375,6 +377,7 @@ model AiSuggestion {
   riskNotifications RiskNotification[]
 
   @@index([projectId, status, createdAt])
+  @@index([projectId, type, status, createdAt])
 }
 
 model RiskScanSchedule {
@@ -548,6 +551,7 @@ model Deliverable {
   @@unique([projectId, seriesId, version])
   @@index([projectId, taskId, status])
   @@index([projectId, createdAt])
+  @@index([createdAt])
 }
 
 model MeetingRecord {

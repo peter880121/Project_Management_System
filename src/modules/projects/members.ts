@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AuthenticatedUser } from "@/modules/auth/rbac";
 import { prisma } from "@/lib/prisma";
 import { recordAudit, type AuditRequestMetadata } from "@/modules/audit/service";
 import { assertProjectAccessTx, visibleProjectWhere, ProjectAccessError } from "@/modules/auth/project-access";
@@ -20,7 +21,8 @@ export async function setProjectMember(projectId: string, input: z.infer<typeof 
     return { id: row.id, version: row.version };
   }, { isolationLevel: "ReadCommitted" });
 }
-export async function getProjectMembers(projectId: string, actor: { id: string; role: "ADMIN" | "PM" | "QA" | "MEMBER" }) {
+export async function getProjectMembers(projectId: string, actor: AuthenticatedUser) {
+  if (actor.role === "PMO") throw new ProjectAccessError();
   const project = await prisma.project.findFirst({ where: { id: projectId, ...visibleProjectWhere(actor) }, select: { id: true, ownerId: true } }); if (!project) throw new ProjectAccessError();
   const canManage = actor.role === "ADMIN" || actor.role === "PM" && project.ownerId === actor.id;
   const [members, candidates] = await Promise.all([

@@ -6,7 +6,7 @@ import { requireRole } from "@/modules/auth/rbac";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const authenticatedRoles = ["ADMIN", "PM", "MEMBER", "QA"] as const;
+const authenticatedRoles = ["ADMIN", "PM", "MEMBER", "QA", "PMO"] as const;
 
 export async function GET() {
   const currentUser = await getCurrentUser();

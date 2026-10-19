@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const roles = ["ADMIN", "PM", "MEMBER", "QA"] as const;
+export const roles = ["ADMIN", "PM", "MEMBER", "QA", "PMO"] as const;
 export const statuses = ["ACTIVE", "PENDING", "DISABLED"] as const;
 export const listUsersSchema = z.object({
   role: z.enum(roles).optional(), status: z.enum(statuses).optional(),

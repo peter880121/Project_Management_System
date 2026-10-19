@@ -10,7 +10,7 @@ import { rotateDatabaseSessionCredential } from "@/modules/auth/session-token";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const authenticatedRoles = ["ADMIN", "PM", "MEMBER", "QA"] as const;
+const authenticatedRoles = ["ADMIN", "PM", "MEMBER", "QA", "PMO"] as const;
 const passwordChangeSchema = z.object({
   currentPassword: z.string().min(1).max(1024),
   newPassword: z.string()
