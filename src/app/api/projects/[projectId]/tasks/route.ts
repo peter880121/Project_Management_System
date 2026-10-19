@@ -1,3 +1,5 @@
+import { planningDate } from "@/modules/planning/schemas";
+import { meetingTaskSourceSchema } from "@/modules/ai/meetings/types";
 import { businessErrorResponse } from "@/modules/audit/errors";
 import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
@@ -12,6 +14,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const createTaskSchema = z.object({
   requiresDeliverable: z.boolean().optional(),
+  assigneeId: z.uuid().optional(),
+  dueDate: planningDate.nullable().optional(),
+  meetingSource: meetingTaskSourceSchema.optional(),
   title: z.string().trim().min(1).max(191),
   description: z.string().trim().max(10_000).optional(),
   requirementId: z.uuid().optional(),

@@ -1,4 +1,5 @@
 "use client";
+import { useProjectTaskRefresh } from "@/components/projects/task-refresh";
 import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import { taskPhase } from "@/modules/projects/task-phases";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
@@ -43,6 +44,7 @@ export function PlanningPanel({ projectId, canManage: initialCanManage, role, us
       }); } }
     catch (error) { if (current === generation.current) { setStale(true); setMessage(error instanceof Error ? error.message : "连接失败"); } throw error; }
   }, [projectId, week, notify]);
+  useProjectTaskRefresh(projectId, load);
   useEffect(() => { void load().catch(() => {}); return invalidate; }, [load, invalidate]);
   async function save(url: string, method: string, body: unknown) {
     if (saving.current) throw new Error("正在保存排期，请稍候");

@@ -7,7 +7,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ mee
   const { meetingId } = await params;
   return assetResourceHttp("meeting", meetingId, [...roles], async user => {
     const row = await prisma.meetingRecord.findUniqueOrThrow({ where: { id: meetingId } });
-    if (!canReadRoles(row.visibleRoles, user.role)) throw new AssetError("无权查看此会议纪要", 403);
+    if (row.status === "DRAFT" && !["PM", "ADMIN"].includes(user.role) || !canReadRoles(row.visibleRoles, user.role)) throw new AssetError("无权查看此会议纪要", 403);
     return Response.json({ data: { ...row, indexStatus: await assetIndexStatus(row.documentId) } });
   });
 }

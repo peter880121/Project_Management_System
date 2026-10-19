@@ -1,4 +1,5 @@
 "use client";
+import { useProjectTaskRefresh } from "@/components/projects/task-refresh";
 import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import { groupTasksByPhase, taskPhase, UNGROUPED_PHASE } from "@/modules/projects/task-phases";
 import Link from "next/link";
@@ -14,7 +15,7 @@ import { orderBoardTasks, taskColumns, type BoardTask, type TaskChange } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/toast-provider";
 
-export function TaskBoard({ project, role, userId, createdTaskId }: { project: { id: string; name: string }; role: string; userId: string; createdTaskId?: string }) {
+export function TaskBoard({ project, role, userId, createdTaskId, openTaskId }: { project: { id: string; name: string }; role: string; userId: string; createdTaskId?: string; openTaskId?: string }) {
   const { capabilities } = useProjectCapabilities();
   const { notify } = useToast();
   const [signing, setSigning] = useState<BoardTask | null>(null);
@@ -64,6 +65,10 @@ export function TaskBoard({ project, role, userId, createdTaskId }: { project: {
       setTasks(ordered); setError("");
     }
   }, [project.id, reveal]);
+  useProjectTaskRefresh(project.id, load);
+  useEffect(() => {
+    if (openTaskId && tasks.some(task => task.id === openTaskId) && announced.current !== `open:${openTaskId}`) { announced.current = `open:${openTaskId}`; setSelected({ id: openTaskId }); }
+  }, [openTaskId, tasks]);
   useEffect(() => {
     let active = true;
     void load().catch(() => { if (active) setError("任务列表暂时无法加载，请重试"); }).finally(() => { if (active) setLoading(false); });

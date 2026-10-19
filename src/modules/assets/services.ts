@@ -79,7 +79,7 @@ export async function createMeeting(projectId: string, input: z.infer<typeof mee
     await lockAssetActor(tx, projectId, actor, ["PM"]);
     const old = await tx.meetingRecord.findUnique({ where: { projectId_requestKey: { projectId, requestKey: input.requestKey } } });
     if (old) {
-      if (old.createdById !== actor.actorId || old.title !== input.title || old.content !== input.content || old.meetingDate.toISOString() !== input.meetingDate || JSON.stringify(old.actionItems) !== JSON.stringify(input.actionItems) || JSON.stringify(old.visibleRoles) !== JSON.stringify(input.visibleRoles)) throw new AssetError("请求标识已用于其他纪要", 409);
+      if (old.status !== (input.status ?? "FINALIZED") || old.createdById !== actor.actorId || old.title !== input.title || old.content !== input.content || old.meetingDate.toISOString() !== input.meetingDate || JSON.stringify(old.actionItems) !== JSON.stringify(input.actionItems) || JSON.stringify(old.visibleRoles) !== JSON.stringify(input.visibleRoles)) throw new AssetError("请求标识已用于其他纪要", 409);
       return old;
     }
     if (!input.visibleRoles.includes("PM")) throw new AssetError("纪要必须对创建角色 PM 可见", 400);
@@ -93,6 +93,7 @@ export async function syncMeeting(id: string, actor: Actor) {
   return prisma.$transaction(async tx => {
     const user = await lockAssetActor(tx, scope.projectId, actor, ["PM", "ADMIN"]);
     const row = await tx.meetingRecord.findUniqueOrThrow({ where: { id } });
+    if (row.status === "DRAFT") throw new AssetError("请先定稿会议纪要，再同步至知识库", 400);
     if (!canReadRoles(row.visibleRoles, user.role)) throw new AssetError("无权查看此纪要", 403);
     if (row.documentId) {
       await tx.assetSourceJob.updateMany({ where: { documentId: row.documentId, status: "FAILED", OR: [{ leaseUntil: null }, { leaseUntil: { lte: new Date() } }] }, data: { status: "QUEUED", attempts: 0, nextRunAt: new Date(), leaseToken: null, leaseUntil: null } });

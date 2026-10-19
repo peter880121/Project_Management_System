@@ -16,7 +16,7 @@ try {
     await delay(500);
   }
   if (!ready) throw new Error(`Fixture application not ready: ${log}`);
-  const test = spawn(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "e2e/ai-streaming.spec.ts", "--output=test-results/ai-streaming-run"], { env, stdio: "inherit", windowsHide: true });
+  const test = spawn(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "e2e/ai-streaming.spec.ts", "e2e/meeting-ai-streaming.spec.ts", "--output=test-results/ai-streaming-run"], { env, stdio: "inherit", windowsHide: true });
   process.exitCode = await new Promise(resolve => test.on("exit", code => resolve(code ?? 1)));
 } finally {
   // Direct server startup keeps cleanup within this fixture's single owned process.

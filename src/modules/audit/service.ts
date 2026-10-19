@@ -1,3 +1,4 @@
+import { prepareMeetingTask, type MeetingTaskSource } from "@/modules/tasks/meeting-source";
 import { randomUUID } from "node:crypto";
 import type { Prisma, TaskStatus } from "@prisma/client";
 import { z } from "zod";
@@ -24,7 +25,7 @@ export type AuditAction =
   | "PROJECT_ACTIVATED" | "PROJECT_SUBMITTED" | "PROJECT_QA_APPROVED" | "PROJECT_ARCHIVED" | "PROJECT_ACCEPTANCE_REJECTED" | "PROJECT_ACCEPTANCE_WITHDRAWN" | "PROJECT_NOTIFICATION_READ"
   | "DELIVERABLE_CREATED" | "DELIVERABLE_UPDATED" | "DELIVERABLE_SUBMITTED" | "DELIVERABLE_REVIEWED"
   | "MEETING_CREATED" | "ASSET_INDEX_REQUESTED" | "ASSET_SOURCE_SYNCED" | "ASSET_SOURCE_FAILED" | "TASK_DELIVERABLE_REQUIREMENT_CHANGED"
-  | "AI_GENERATION_CANCELLED"
+  | "AI_GENERATION_CANCELLED" | "AI_MEETING_GENERATED" | "AI_MEETING_GENERATION_FAILED" | "MEETING_UPDATED" | "MEETING_FINALIZED" | "MEETING_ACTION_ITEM_CONVERTED"
   | "PROJECT_MEMBER_UPDATED"
   | "COMPLIANCE_EXPORT_PREPARED"
   | "COMPLIANCE_EXPORT_FAILED"
@@ -96,6 +97,9 @@ const acceptedWbsPayloadSchema = z.object({
 
 export async function createTask(input: {
   requiresDeliverable?: boolean;
+  assigneeId?: string;
+  dueDate?: string | null;
+  meetingSource?: MeetingTaskSource;
   projectId: string;
   title: string;
   description?: string;
@@ -103,7 +107,14 @@ export async function createTask(input: {
   actorId: string;
 } & AuditRequestMetadata) {
   return prisma.$transaction(async (tx) => {
-    await lockBusinessActor(tx, input.actorId, ["ADMIN", "PM"], input.projectId);
+    await lockBusinessActor(tx, input.actorId, input.meetingSource ? ["PM"] : ["ADMIN", "PM"], input.projectId, input.assigneeId ? [input.assigneeId] : []);
+    await assertProjectAccessTx(tx, input.actorId, input.projectId);
+    const source = input.meetingSource ? await prepareMeetingTask(tx, input.projectId, input.meetingSource) : null;
+    if (source?.existing) return source.existing;
+    if (input.assigneeId) {
+      const user = await tx.user.findUnique({ where: { id: input.assigneeId }, select: { status: true, isSystem: true } });
+      if (!user || user.status !== "ACTIVE" || user.isSystem || !await participant(tx, input.projectId, input.assigneeId)) throw new BusinessError("请选择当前项目的有效成员", 400);
+    }
     const project = await tx.project.findUnique({ where: { id: input.projectId }, select: { id: true } });
     if (!project) throw new BusinessError("Project not found", 404);
     if (input.requirementId) {
@@ -116,6 +127,8 @@ export async function createTask(input: {
       description: input.description,
       requirementId: input.requirementId,
       requiresDeliverable: input.requiresDeliverable ?? false,
+      assigneeId: input.assigneeId,
+      dueDate: input.dueDate ? new Date(`${input.dueDate}T23:59:59.999Z`) : null,
     } });
     await recordAudit(tx, {
       actorId: input.actorId,
@@ -123,10 +136,16 @@ export async function createTask(input: {
       action: "TASK_CREATED",
       entityType: "Task",
       entityId: task.id,
-      after: { title: task.title, status: task.status, requirementId: task.requirementId, requiresDeliverable: task.requiresDeliverable },
+      after: { title: task.title, status: task.status, requirementId: task.requirementId, requiresDeliverable: task.requiresDeliverable, assigneeId: task.assigneeId, dueDate: task.dueDate?.toISOString() ?? null },
       ip: input.ip,
       userAgent: input.userAgent,
     });
+    if (source && input.meetingSource) {
+      Object.assign(source.item, { taskId: task.id, convertedAt: new Date().toISOString(), convertedById: input.actorId });
+      await tx.meetingRecord.update({ where: { id: source.meeting.id }, data: { actionItems: source.items, rowVersion: { increment: 1 } } });
+      await recordAudit(tx, { ...input, action: "MEETING_ACTION_ITEM_CONVERTED", entityType: "MeetingRecord", entityId: source.meeting.id, after: { actionItemId: source.item.id, taskId: task.id, rowVersion: source.meeting.rowVersion + 1, visibilityExpansionConfirmed: true } });
+      if ("suggestionId" in source.item && source.item.suggestionId) await recordAudit(tx, { ...input, action: "AI_SUGGESTION_ACCEPTED", entityType: "AiSuggestion", entityId: source.item.suggestionId, after: { actionItemId: source.item.id, taskId: task.id, adoption: "ACTION_ITEM_ONLY" } });
+    }
     return task;
   });
 }

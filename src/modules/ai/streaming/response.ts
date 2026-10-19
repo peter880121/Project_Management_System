@@ -27,7 +27,7 @@ export function safeStreamError(error: unknown): Extract<AiStreamEvent, { event:
   return { event: "error", data: { code: "GENERATION_FAILED", status: 503, message: "生成未完成，请刷新待确认列表后重试", retryable: true } };
 }
 
-export function generationResponse(request: Request, input: { generationId: string; projectId: string; actorId: string; taskId?: string } & AuditRequestMetadata, run: (stream: GenerationStream) => Promise<unknown>): Response {
+export function generationResponse(request: Request, input: { generationId: string; projectId: string; actorId: string; taskId?: string; meetingId?: string } & AuditRequestMetadata, run: (stream: GenerationStream) => Promise<unknown>): Response {
   const encoder = new TextEncoder(); const controller = new AbortController();
   let closed = false; let committed = false;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -55,7 +55,7 @@ export function generationResponse(request: Request, input: { generationId: stri
           if (!closed) { closed = true; sink.close(); }
           if (controller.signal.aborted && !committed) {
             try {
-              await prisma.$transaction(tx => recordAudit(tx, { actorId: input.actorId, projectId: input.projectId, action: "AI_GENERATION_CANCELLED", entityType: "AiGeneration", entityId: input.generationId, after: { taskId: input.taskId ?? null, reason: controller.signal.reason?.name === "AbortError" ? "CLIENT_CANCELLED" : "DEADLINE_EXCEEDED" }, ip: input.ip, userAgent: input.userAgent }));
+              await prisma.$transaction(tx => recordAudit(tx, { actorId: input.actorId, projectId: input.projectId, action: "AI_GENERATION_CANCELLED", entityType: "AiGeneration", entityId: input.generationId, after: { taskId: input.taskId ?? null, ...(input.meetingId ? { meetingId: input.meetingId } : {}), reason: controller.signal.reason?.name === "AbortError" ? "CLIENT_CANCELLED" : "DEADLINE_EXCEEDED" }, ip: input.ip, userAgent: input.userAgent }));
             } catch { console.warn("AI_GENERATION_CANCEL_AUDIT_UNAVAILABLE", { generationId: input.generationId }); }
           }
         }

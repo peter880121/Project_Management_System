@@ -12,7 +12,7 @@ export async function GET(request: Request, { params }: Context) {
   return assetHttp(projectId, [...roles], async user => {
     const page = z.coerce.number().int().min(1).max(10000).parse(new URL(request.url).searchParams.get("page") ?? 1);
     const visibility: Prisma.MeetingRecordWhereInput = user.role === "ADMIN" ? {} : { visibleRoles: { array_contains: user.role } };
-    const rows = await prisma.meetingRecord.findMany({ where: { projectId, ...visibility }, orderBy: [{ meetingDate: "desc" }, { id: "asc" }], take: 30, skip: (page - 1) * 30 });
+    const rows = await prisma.meetingRecord.findMany({ where: { projectId, ...visibility, ...(!["PM", "ADMIN"].includes(user.role) ? { status: "FINALIZED" as const } : {}) }, orderBy: [{ meetingDate: "desc" }, { id: "asc" }], take: 30, skip: (page - 1) * 30 });
     return Response.json({ data: await Promise.all(rows.map(async row => ({ ...row, indexStatus: await assetIndexStatus(row.documentId) }))) });
   });
 }

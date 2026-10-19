@@ -68,6 +68,12 @@ enum AiSuggestionType {
   ESTIMATE
   RISK
   AUDIT_SUMMARY
+  MEETING_SUMMARY
+}
+
+enum MeetingStatus {
+  DRAFT
+  FINALIZED
 }
 
 model User {
@@ -561,6 +567,8 @@ model MeetingRecord {
   meetingDate DateTime @db.DateTime(3)
   content     String   @db.LongText
   actionItems Json
+  status      MeetingStatus @default(FINALIZED)
+  rowVersion  Int @default(1) @db.UnsignedInt
   createdById String   @db.Char(36)
   requestKey  String   @db.Char(36)
   visibleRoles Json    @default("[\"ADMIN\",\"PM\",\"QA\",\"MEMBER\"]")
