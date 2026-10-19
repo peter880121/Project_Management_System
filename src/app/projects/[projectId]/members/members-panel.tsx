@@ -1,8 +1,10 @@
 "use client";
+import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 type Snapshot = { ownerId: string; canManage: boolean; members: { userId: string; active: boolean; version: number; user: { name: string; role: string } }[]; candidates: { id: string; name: string; role: string }[] };
 export function MembersPanel({ projectId }: { projectId: string }) {
+  const { capabilities } = useProjectCapabilities(); const canManage = capabilities?.canManageMembers ?? true;
   const [data, setData] = useState<Snapshot>(); const [selected, setSelected] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => { const response = await fetch(`/api/projects/${projectId}/members`); const body = await response.json(); if (!response.ok) throw new Error(body.error); setData(body); }, [projectId]);
   useEffect(() => { void load().catch((e) => setError(String(e.message))); }, [load]);
@@ -40,7 +42,7 @@ export function MembersPanel({ projectId }: { projectId: string }) {
                 <td className="whitespace-nowrap px-5 py-4 text-slate-600">{member.userId === data.ownerId ? "负责人默认授权" : "已授权"}</td>
                 {data.canManage && <td className="px-5 py-4 text-right">{member.userId === data.ownerId
                   ? <span className="whitespace-nowrap text-xs text-slate-400">负责人不可移出</span>
-                  : <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void save(member.userId, false)}>移出</Button>}</td>}
+                  : <Button type="button" variant="outline" size="sm" disabled={busy || !canManage} onClick={() => void save(member.userId, false)}>移出</Button>}</td>}
               </tr>)}
               {activeMembers.length === 0 && <tr><td colSpan={data.canManage ? 4 : 3} className="px-5 py-10 text-center leading-6 text-slate-500">暂无额外授权成员，负责人仍拥有项目访问权。</td></tr>}
             </tbody>
@@ -51,11 +53,11 @@ export function MembersPanel({ projectId }: { projectId: string }) {
         <h2 className="text-base font-semibold">添加项目成员</h2>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <label className="min-w-0 flex-1 space-y-2 text-sm font-medium text-slate-700">选择成员
-            <select aria-label="待添加成员" disabled={busy} className="block h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" value={selected} onChange={event => setSelected(event.target.value)}>
+            <select aria-label="待添加成员" disabled={busy || !canManage} className="block h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-normal" value={selected} onChange={event => setSelected(event.target.value)}>
               <option value="">选择成员</option>{data.candidates.filter(user => user.id !== data.ownerId && !data.members.some(member => member.userId === user.id && member.active)).map(user => <option key={user.id} value={user.id}>{user.name} · {user.role}</option>)}
             </select>
           </label>
-          <Button type="button" className="shrink-0" disabled={busy || !selected} onClick={() => void save(selected, true)}>添加成员</Button>
+          <Button type="button" className="shrink-0" disabled={busy || !selected || !canManage} onClick={() => void save(selected, true)}>添加成员</Button>
         </div>
       </div>}
     </>}

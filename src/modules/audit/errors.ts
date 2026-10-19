@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { freezeErrorResponse } from "@/modules/projects/freeze";
 import { ProjectAccessError } from "@/modules/auth/project-access";
 
 /** Only explicitly constructed business errors may expose their message over HTTP. */
@@ -7,6 +8,7 @@ export class BusinessError extends Error {
 }
 
 export function businessErrorResponse(error: unknown) {
+  const frozen = freezeErrorResponse(error); if (frozen) return frozen;
   if (error instanceof BusinessError || error instanceof ProjectAccessError) {
     return Response.json({ error: error.message }, { status: error.status });
   }

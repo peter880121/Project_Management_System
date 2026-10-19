@@ -6,7 +6,7 @@ import { analyzeProjectRisks, type RiskFinding, type RiskTask } from "./rules";
 import { calculateWeeklyLoad, utcWeekStart } from "@/modules/planning/rules";
 import { loadPlanningSnapshot, lockPlanningActor } from "@/modules/planning/repositories";
 import { notifyRiskSuggestions } from "./notifications";
-import { lockProject, lockUsers } from "@/modules/auth/transaction-locks";
+import { lockProjectForWrite, lockUsers } from "@/modules/auth/transaction-locks";
 
 export type RiskSuggestion = { id: string; output: Prisma.JsonValue; createdAt: Date };
 
@@ -39,7 +39,7 @@ export function buildRiskSuggestions(findings: RiskFinding[], batchId: string) {
 
 export async function generateProjectRiskWarnings(input: { projectId: string; actorId: string; now?: Date } & AuditRequestMetadata) {
   return prisma.$transaction(async (tx) => {
-    await lockProject(tx, input.projectId);
+    await lockProjectForWrite(tx, input.projectId);
     const project = await tx.project.findUnique({ where: { id: input.projectId }, select: { ownerId: true } });
     await lockUsers(tx, [input.actorId, ...(project?.ownerId ? [project.ownerId] : [])]);
     await lockPlanningActor(tx, input.actorId);

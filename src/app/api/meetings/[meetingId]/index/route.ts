@@ -7,5 +7,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ mee
   const { meetingId } = await params;
   return assetResourceHttp("meeting", meetingId, ["PM", "ADMIN"], async user => {
     syncSchema.parse(await request.json()); return Response.json({ data: await syncMeeting(meetingId, { actorId: user.id, ...getAuditRequestMetadata(request) }) });
-  });
+  }, request);
 }

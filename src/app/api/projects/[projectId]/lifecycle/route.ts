@@ -1,0 +1,17 @@
+import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/modules/auth/session";
+import { assertProjectAccess } from "@/modules/auth/project-access";
+import { projectErrorResponse } from "@/modules/projects/http";
+import { projectCapabilities } from "@/modules/projects/capabilities";
+export const dynamic = "force-dynamic";
+export async function GET(_request: Request, { params }: { params: Promise<{ projectId: string }> }) {
+  try {
+    const user = await getCurrentUser(); if (!user) return Response.json({ error: "请先登录" }, { status: 401 });
+    const { projectId } = await params; if (!z.uuid().safeParse(projectId).success) return Response.json({ error: "项目 ID 无效" }, { status: 400 });
+    await assertProjectAccess(user, projectId);
+    const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { currentAcceptance: true } });
+    const history = await prisma.projectAcceptance.findMany({ where: { projectId }, select: { id: true, round: true, state: true, snapshotSha256: true, submittedAt: true, qaApprovedAt: true, reviewComment: true, closedAt: true }, orderBy: { round: "desc" }, take: 20 });
+    return Response.json({ data: { project, capabilities: projectCapabilities(project, user), history } }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) { return projectErrorResponse(error); }
+}

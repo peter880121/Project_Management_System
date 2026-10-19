@@ -11,5 +11,5 @@ export async function GET(_request: Request, { params }: Context) {
 }
 export async function PATCH(request: Request, { params }: Context) {
   const { deliverableId } = await params;
-  return assetResourceHttp("deliverable", deliverableId, ["PM"], async user => Response.json({ data: await mutateDeliverable(deliverableId, "edit", deliverableEditSchema.parse(await request.json()), { actorId: user.id, ...getAuditRequestMetadata(request) }) }));
+  return assetResourceHttp("deliverable", deliverableId, ["PM"], async user => Response.json({ data: await mutateDeliverable(deliverableId, "edit", deliverableEditSchema.parse(await request.json()), { actorId: user.id, ...getAuditRequestMetadata(request) }) }), request);
 }

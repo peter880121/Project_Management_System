@@ -1,13 +1,13 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { PlanningError } from "./schemas";
-import { lockProject } from "@/modules/auth/transaction-locks";
+import { lockProjectForWrite } from "@/modules/auth/transaction-locks";
 export async function lockPlanningActor(tx: Prisma.TransactionClient, id: string, projectId?: string) {
-  if (projectId) await lockProject(tx, projectId);
+  if (projectId) await lockProjectForWrite(tx, projectId);
   const [user] = await tx.$queryRaw<{ role: string; status: string; isSystem: boolean }[]>`SELECT role, status, isSystem FROM User WHERE id = ${id} FOR UPDATE`;
   if (!user || user.status !== "ACTIVE" || user.isSystem || user.role !== "PM") throw new PlanningError("仅有效 PM 账号可维护排期和容量", 403);
 }
-export const lockPlanningProject = lockProject;
+export const lockPlanningProject = lockProjectForWrite;
 export const planningTaskProject = (id: string) => prisma.task.findUnique({ where: { id }, select: { projectId: true } });
 export const planningTask = (tx: Prisma.TransactionClient, id: string) => tx.task.findUnique({ where: { id }, include: { dependencies: true } });
 export const projectTasks = (tx: Prisma.TransactionClient, projectId: string) => tx.task.findMany({ where: { projectId }, include: { dependencies: true }, take: 5001, orderBy: { id: "asc" } });

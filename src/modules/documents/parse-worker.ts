@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { SYSTEM_USER_ID } from "@/lib/system-user";
 import { recordAudit } from "@/modules/audit/service";
-import { lockProject, lockUsers } from "@/modules/auth/transaction-locks";
+import { lockProjectForWrite, lockUsers } from "@/modules/auth/transaction-locks";
 import { documentStorage, parseArtifactStorage, type DocumentStorage } from "./storage";
 import { createMineruClient, ParseError, type MineruClient } from "./mineru";
 import * as repository from "./parse-repositories";
@@ -18,7 +18,7 @@ async function claimJob() {
       return await prisma.$transaction(async (tx) => {
         const now = new Date();
         const candidate = await repository.findParseCandidate(tx, now); if (!candidate) return null;
-        await lockProject(tx, candidate.document.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+        await lockProjectForWrite(tx, candidate.document.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
         await repository.lockParseDocument(tx, candidate.documentId);
         const token = randomUUID();
         const changed = await repository.updateParseJob(tx, { where: { id: candidate.id, status: { in: ["QUEUED", "RUNNING"] }, nextRunAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, data: { leaseToken: token, leaseUntil: new Date(now.getTime() + LEASE_MS), status: "RUNNING" } });
@@ -48,7 +48,7 @@ async function recordFailure(job: ClaimedJob, error: unknown) {
   const attempts = job.attempts + 1;
   const terminal = !safe.retryable || attempts >= 3 || job.deadlineAt.getTime() <= Date.now();
   await prisma.$transaction(async (tx) => {
-    await lockProject(tx, job.document.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+    await lockProjectForWrite(tx, job.document.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
     await repository.lockParseDocument(tx, job.documentId);
     const changed = await repository.updateParseJob(tx, { where: owned(job), data: { status: terminal ? "FAILED" : "RUNNING", attempts, errorCode: safe.code, leaseToken: null, leaseUntil: null, nextRunAt: new Date(Date.now() + 5000 * attempts), completedAt: terminal ? new Date() : null } });
     if (changed.count !== 1) return;
@@ -86,7 +86,7 @@ export async function runParseWorkerTick(adapters?: { mineru: MineruClient; stor
         const work = await prisma.$transaction((tx) => repository.queueParseArtifact(tx, job.documentId, job.document.projectId, job.id, key));
         await artifacts.put(key, result.raw, hash);
         await prisma.$transaction(async (tx) => {
-          await lockProject(tx, job.document.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+          await lockProjectForWrite(tx, job.document.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
           await repository.lockParseDocument(tx, job.documentId);
           const updated = await repository.updateParseJob(tx, { where: owned(job), data: { status: "SUCCEEDED", markdown: result.markdown, blocks: result.blocks, resultKey: key, resultSha256: hash, uploadUrl: null, errorCode: null, completedAt: new Date(), leaseUntil: null, leaseToken: null } });
           if (updated.count !== 1) throw new ParseError("PARSE_LEASE_LOST");
@@ -113,7 +113,7 @@ export async function cleanupParseArtifact(artifacts = parseArtifactStorage) {
   try {
     if (job.resultKey !== key) await artifacts.remove(key);
     await prisma.$transaction(async (tx) => {
-      await lockProject(tx, job.document.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+      await lockProjectForWrite(tx, job.document.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
       await repository.removeArtifactWork(tx, work.id);
       await recordAudit(tx, { actorId: SYSTEM_USER_ID, projectId: job.document.projectId, action: "DOCUMENT_PARSE_ARTIFACT_CLEANED", entityType: "DocumentParseJob", entityId: job.id, after: { preservedReferencedResult: job.resultKey === key }, userAgent: "document-parser-worker" });
     });

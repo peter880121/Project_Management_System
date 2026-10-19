@@ -41,7 +41,9 @@ export function useAiGeneration<T>() {
         if (request.signal.aborted || current !== version.current || !mounted.current) return null;
         if (session?.status === 401) router.replace(`/login?next=${encodeURIComponent(window.location.pathname)}`);
         else router.refresh();
+        window.dispatchEvent(new Event("project-access-invalidated"));
       }
+      if (error instanceof AiStreamError && ["PROJECT_ARCHIVED", "PROJECT_IN_ACCEPTANCE"].includes(error.code)) { setPreview(""); window.dispatchEvent(new CustomEvent("project-access-invalidated", { detail: { code: error.code } })); }
       throw error;
     } finally { writer.stop(); if (mounted.current && current === version.current) setRunning(false); }
   }, [cancel, notify, router]);

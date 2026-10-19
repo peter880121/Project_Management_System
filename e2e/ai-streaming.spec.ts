@@ -37,7 +37,8 @@ async function startWbs(page: Page) {
 test("real SSE shows progressive text and saves validated pending cards", async ({ page }) => {
   test.setTimeout(90000);
   const drawer = await startWbs(page); const preview = drawer.getByRole("region", { name: "AI 流式生成预览" });
-  await expect(preview.getByText(/正在核对当前任务的交付/)).toBeVisible();
+  // A fresh isolated Next.js build must compile this API before the first SSE byte.
+  await expect(preview.getByText(/正在核对当前任务的交付/)).toBeVisible({ timeout: 15000 });
   await expect(preview.getByRole("button", { name: "停止生成" })).toBeVisible();
   const before = await preview.locator("p").nth(1).textContent();
   await expect.poll(() => preview.locator("p").nth(1).textContent()).not.toBe(before);

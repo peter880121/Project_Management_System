@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { SYSTEM_USER_ID } from "@/lib/system-user";
 import { recordAudit } from "@/modules/audit/service";
-import { lockProject, lockUsers } from "@/modules/auth/transaction-locks";
+import { lockProjectForWrite, lockUsers } from "@/modules/auth/transaction-locks";
 import { documentEmbeddingModel, embedDocumentText } from "@/modules/ai/embeddings";
 import { upsertDocumentVector } from "@/modules/vector/documents";
 import { chunkParsedDocument, CHUNKER_VERSION } from "./chunking";
@@ -17,7 +17,7 @@ export async function buildDocumentChunksTick() {
   catch {
     // Quarantine oversized normalized output so one document cannot starve the queue.
     await prisma.$transaction(async (tx) => {
-      await lockProject(tx, candidate.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+      await lockProjectForWrite(tx, candidate.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
       await repository.lockRagDocument(tx, candidate.id);
       const document = await repository.loadRagDocumentTx(tx, candidate.id);
       if (document.parsedVersion !== candidate.parsedVersion || await repository.buildFailureTx(tx, document.id, candidate.parsedVersion)) return;
@@ -28,7 +28,7 @@ export async function buildDocumentChunksTick() {
   }
   const model = documentEmbeddingModel();
   await prisma.$transaction(async (tx) => {
-    await lockProject(tx, candidate.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+    await lockProjectForWrite(tx, candidate.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
     await repository.lockRagDocument(tx, candidate.id);
     const document = await repository.loadRagDocumentTx(tx, candidate.id);
     if (document.parsedVersion !== candidate.parsedVersion || document.chunkedVersion === candidate.parsedVersion || document.storageStatus !== "AVAILABLE") return;
@@ -45,7 +45,7 @@ export type DocumentIndexAdapters = { embed: typeof embedDocumentText; upsert: t
 export async function syncDocumentVectorTick(adapters: DocumentIndexAdapters = { embed: embedDocumentText, upsert: upsertDocumentVector }) {
   const chunk = await prisma.$transaction(async (tx) => {
     const now = new Date(); const candidate = await repository.vectorCandidate(tx, now); if (!candidate) return null;
-    await lockProject(tx, candidate.projectId);
+    await lockProjectForWrite(tx, candidate.projectId, true);
     const token = randomUUID();
     const updated = await repository.updateChunk(tx, { where: { id: candidate.id, vectorStatus: { in: ["PENDING", "FAILED"] }, attempts: { lt: 5 }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, data: { leaseToken: token, leaseUntil: new Date(now.getTime() + 60000) } });
     return updated.count === 1 ? { ...candidate, leaseToken: token } : null;
@@ -64,7 +64,7 @@ export async function syncDocumentVectorTick(adapters: DocumentIndexAdapters = {
       new Promise<never>((_, reject) => { timer = setTimeout(() => { expired = true; reject(new Error("DOCUMENT_INDEX_TIMEOUT")); }, 40000); }),
     ]);
     await prisma.$transaction(async (tx) => {
-      await lockProject(tx, chunk.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+      await lockProjectForWrite(tx, chunk.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
       const updated = await repository.updateChunk(tx, { where: { ...owned, leaseUntil: { gt: new Date() } }, data: { vectorStatus: "SYNCED", errorCode: null, leaseUntil: null, leaseToken: null } });
       if (updated.count !== 1) return;
       await repository.removeSyncFailure(tx, chunk.id);
@@ -72,7 +72,7 @@ export async function syncDocumentVectorTick(adapters: DocumentIndexAdapters = {
     });
   } catch {
     await prisma.$transaction(async (tx) => {
-      await lockProject(tx, chunk.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+      await lockProjectForWrite(tx, chunk.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
       const attempts = chunk.attempts + 1;
       const updated = await repository.updateChunk(tx, { where: { ...owned, leaseUntil: { gt: new Date() } }, data: { vectorStatus: "FAILED", attempts, errorCode: "DOCUMENT_VECTOR_SYNC_FAILED", nextRunAt: new Date(Date.now() + Math.min(300000, 10000 * 2 ** attempts)), leaseToken: null, leaseUntil: null } });
       if (updated.count !== 1) return;

@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "./session";
 import { assertProjectAccess, ProjectAccessError } from "./project-access";
 import { canReadRoles } from "@/modules/assets/validation";
+import { assertProjectWritable, requestChangesBusiness } from "@/modules/projects/write-scope";
+import { freezeErrorResponse } from "@/modules/projects/freeze";
 async function resolveScope(request: Request): Promise<string | null | undefined> {
   const parts = new URL(request.url).pathname.split("/").filter(Boolean);
   const kind = parts[1]; const id = parts[2];
@@ -37,13 +39,15 @@ export function projectScoped<C>(handler: (request: Request, context: C) => Prom
         const doc = await prisma.document.findUnique({ where: { id: assetParts[2] }, select: { visibleRoles: true } });
         if (doc && !canReadRoles(doc.visibleRoles, actor.role)) return Response.json({ error: "无权访问此资产" }, { status: 403 });
       }
+      const scope = await resolveScope(request);
       if (actor.role !== "ADMIN") {
-        const scope = await resolveScope(request);
         if (scope === null) return Response.json({ error: "项目记录不存在或不可访问" }, { status: 403 });
         if (scope) await assertProjectAccess(actor, scope);
       }
+      if (scope && requestChangesBusiness(request)) await assertProjectWritable(scope);
       return await handler(request, context!);
     } catch (error) {
+      const frozen = freezeErrorResponse(error); if (frozen) return frozen;
       if (error instanceof ProjectAccessError) return Response.json({ error: error.message }, { status: error.status });
       console.error("Project-scoped request failed"); return Response.json({ error: "项目操作失败", }, { status: 500 });
     }

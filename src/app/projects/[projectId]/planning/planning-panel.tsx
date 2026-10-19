@@ -1,4 +1,5 @@
 "use client";
+import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import { taskPhase } from "@/modules/projects/task-phases";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
@@ -14,7 +15,8 @@ import { scheduleFormInput, scheduleValidationMessage } from "@/modules/planning
 type Task = PlanningTask;
 const GanttView = dynamic<PlanningGanttProps>(() => import("@/components/planning/planning-gantt").catch(() => ({ default: function Unavailable({ onTable }: PlanningGanttProps) { return <div role="alert" className="rounded-lg bg-amber-50 p-4">图表加载失败，排期数据仍可在表格查看。<button onClick={onTable} className="ml-3">切换表格视图</button></div>; } })), { ssr: false, loading: () => <div role="status" aria-label="正在加载甘特图" className="space-y-4"><Skeleton className="h-12 w-full" /><Skeleton className="h-96 w-full" /></div> });
 type Snapshot = { tasks: Task[]; loads: (MemberLoad & { projectCount: number; taskCount: number; incompleteTaskCount: number })[]; members: { id: string; name: string; status: string }[] };
-export function PlanningPanel({ projectId, canManage, role, userId }: { projectId: string; canManage: boolean; role: string; userId: string }) {
+export function PlanningPanel({ projectId, canManage: initialCanManage, role, userId }: { projectId: string; canManage: boolean; role: string; userId: string }) {
+  const { capabilities } = useProjectCapabilities(); const canManage = capabilities?.canSchedule ?? initialCanManage;
   const { notify } = useToast();
   const [view, setView] = useState<"gantt" | "table">("gantt");
   const [mode, setMode] = useState<GanttMode>("Week");

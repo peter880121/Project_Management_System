@@ -1,4 +1,5 @@
 "use client";
+import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -15,6 +16,7 @@ const requirementStatuses = ["DRAFT", "IN_REVIEW", "APPROVED", "RETIRED"];
 const testStatuses = ["NOT_RUN", "PASSED", "FAILED", "BLOCKED"];
 
 export function TraceabilityManager({ projectId, role, initial }: { projectId: string; role: Role; initial: TraceData }) {
+  const { capabilities } = useProjectCapabilities();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -81,7 +83,7 @@ export function TraceabilityManager({ projectId, role, initial }: { projectId: s
   }
   return <div className="space-y-6">
     {message && feedback?.kind !== "testCase" && <p role={failed ? "alert" : "status"} className={failed ? "text-red-700" : "text-teal-800"}>{message}</p>}
-    <fieldset disabled={busy} className="space-y-6">
+    <fieldset disabled={capabilities?.writable === false || busy} className="space-y-6">
       {role === "PM" && <section className="space-y-3 rounded-xl border bg-white p-5"><h2 className="text-xl font-semibold">历史检索索引</h2><p className="text-sm text-slate-600">关键词降级会保留待同步任务。服务恢复后可重试，每次最多 5 项，累计失败 5 次后停止自动选取。</p><Button type="button" onClick={() => void retryHistory()}>重试历史任务索引</Button></section>}
       {role === "PM" && <form onSubmit={(event) => void save(event, { kind: "requirement" }, false)} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-xl font-semibold">新建需求</h2>{requirementFields()}<div className="pt-2"><Button>创建需求</Button></div></form>}
       {initial.requirements.length === 0 && <p>暂无需求，请由 PM 创建。</p>}
@@ -93,8 +95,8 @@ export function TraceabilityManager({ projectId, role, initial }: { projectId: s
         <h3 className="font-semibold">测试用例</h3>
         {requirement.testCases.map((item) => <div key={item.id}><p className="text-sm">{item.title}</p><VersionReview projectId={projectId} entityType="TestCase" entityId={item.id} requirementId={requirement.id} version={requirement.version} updatedAt={item.updatedAt} reviewedVersion={item.reviewedRequirementVersion} canReview={role === "QA"} /></div>)}
         {requirement.testCases.length === 0 && <p className="text-sm text-slate-600">尚无测试用例。</p>}
-        {requirement.testCases.map((item) => role === "QA" ? <form key={`${item.id}-${item.updatedAt}`} className={`space-y-3 rounded border p-4 ${highlightedId === item.id ? "border-emerald-500 bg-emerald-50" : ""}`} onSubmit={(event) => void save(event, { kind: "testCase", id: item.id, expectedUpdatedAt: item.updatedAt }, true)}>{testFields(item)}<Button disabled={busy} aria-busy={busy}>{busy ? "保存中…" : "保存测试用例"}</Button>{localFeedback(item.id)}</form> : <p key={item.id}>{item.title} · {item.status}</p>)}
-        {role === "QA" && <form className="space-y-3 rounded border p-4" onSubmit={(event) => void save(event, { kind: "testCase", requirementId: requirement.id }, false)}><h4 className="font-medium">新增测试用例</h4>{testFields()}<Button disabled={busy} aria-busy={busy}>{busy ? "保存中…" : "创建测试用例"}</Button>{localFeedback(requirement.id)}</form>}
+        {requirement.testCases.map((item) => role === "QA" ? <form key={`${item.id}-${item.updatedAt}`} className={`space-y-3 rounded border p-4 ${highlightedId === item.id ? "border-emerald-500 bg-emerald-50" : ""}`} onSubmit={(event) => void save(event, { kind: "testCase", id: item.id, expectedUpdatedAt: item.updatedAt }, true)}>{testFields(item)}<Button disabled={capabilities?.writable === false || busy} aria-busy={busy}>{busy ? "保存中…" : "保存测试用例"}</Button>{localFeedback(item.id)}</form> : <p key={item.id}>{item.title} · {item.status}</p>)}
+        {role === "QA" && <form className="space-y-3 rounded border p-4" onSubmit={(event) => void save(event, { kind: "testCase", requirementId: requirement.id }, false)}><h4 className="font-medium">新增测试用例</h4>{testFields()}<Button disabled={capabilities?.writable === false || busy} aria-busy={busy}>{busy ? "保存中…" : "创建测试用例"}</Button>{localFeedback(requirement.id)}</form>}
       </section>)}
       {role === "PM" && <section className="space-y-3 rounded-xl border bg-white p-5"><h2 className="text-xl font-semibold">任务关联需求</h2>{initial.tasks.map((task) => <form key={`${task.id}-${task.requirementId}`} className="space-y-2 rounded border p-3" onSubmit={(event) => {
         const requirementId = new FormData(event.currentTarget).get("requirementId") || null;

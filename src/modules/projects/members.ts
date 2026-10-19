@@ -2,11 +2,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { recordAudit, type AuditRequestMetadata } from "@/modules/audit/service";
 import { assertProjectAccessTx, visibleProjectWhere, ProjectAccessError } from "@/modules/auth/project-access";
-import { lockProject, lockUsers } from "@/modules/auth/transaction-locks";
+import { lockProjectForWrite, lockUsers } from "@/modules/auth/transaction-locks";
 export const memberSchema = z.object({ userId: z.uuid(), active: z.boolean(), expectedVersion: z.number().int().nonnegative() }).strict();
 export async function setProjectMember(projectId: string, input: z.infer<typeof memberSchema>, actor: { actorId: string } & AuditRequestMetadata) {
   return prisma.$transaction(async (tx) => {
-    await lockProject(tx, projectId);
+    await lockProjectForWrite(tx, projectId);
     await lockUsers(tx, [actor.actorId, input.userId]);
     await assertProjectAccessTx(tx, actor.actorId, projectId);
     const user = await tx.user.findUniqueOrThrow({ where: { id: actor.actorId } }); const project = await tx.project.findUniqueOrThrow({ where: { id: projectId } });

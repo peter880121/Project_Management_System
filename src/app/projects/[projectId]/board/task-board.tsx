@@ -1,4 +1,5 @@
 "use client";
+import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import { groupTasksByPhase, taskPhase, UNGROUPED_PHASE } from "@/modules/projects/task-phases";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/toast-provider";
 
 export function TaskBoard({ project, role, userId, createdTaskId }: { project: { id: string; name: string }; role: string; userId: string; createdTaskId?: string }) {
+  const { capabilities } = useProjectCapabilities();
   const { notify } = useToast();
   const [signing, setSigning] = useState<BoardTask | null>(null);
   const [tasks, setTasks] = useState<BoardTask[]>([]);
@@ -91,7 +93,7 @@ export function TaskBoard({ project, role, userId, createdTaskId }: { project: {
     } finally { locks.current.delete(taskId); setPending(new Set(locks.current)); }
   }
   return <main aria-label="项目任务工作区" className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden px-4 py-4 sm:px-6">
-    <header className="shrink-0"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><Link href="/projects" className="inline-flex items-center gap-1 border-0 p-0 text-xs text-slate-500"><ArrowLeft aria-hidden="true" className="size-3" />项目</Link><h1 className="mt-1 truncate text-xl font-semibold tracking-tight sm:text-2xl">{project.name}</h1></div>{["PM", "ADMIN"].includes(role) && <Link href={`/projects/${project.id}/tasks/new`} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border-teal-800 bg-teal-800 px-3 py-2 text-xs font-semibold text-white"><Plus aria-hidden="true" className="size-4" />创建任务</Link>}</div>
+    <header className="shrink-0"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><Link href="/projects" className="inline-flex items-center gap-1 border-0 p-0 text-xs text-slate-500"><ArrowLeft aria-hidden="true" className="size-3" />项目</Link><h1 className="mt-1 truncate text-xl font-semibold tracking-tight sm:text-2xl">{project.name}</h1></div>{["PM", "ADMIN"].includes(role) && <Link href={`/projects/${project.id}/tasks/new`} aria-disabled={capabilities?.canEditTasks === false} tabIndex={capabilities?.canEditTasks === false ? -1 : undefined} onClick={event => { if (capabilities?.canEditTasks === false) event.preventDefault(); }} className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border-teal-800 bg-teal-800 px-3 py-2 text-xs font-semibold text-white ${capabilities?.canEditTasks === false ? "pointer-events-none opacity-40" : ""}`}><Plus aria-hidden="true" className="size-4" />创建任务</Link>}</div>
       <section aria-label="任务状态概览" className="mt-4 grid grid-cols-4 gap-2 sm:gap-3">{taskColumns.map(column => <div key={column.status} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 sm:px-4 sm:py-3"><p className="flex items-center gap-2 text-xs text-slate-500"><span aria-hidden="true" className={`hidden size-2 rounded-full sm:block ${column.dot}`} />{column.title}</p>{loading ? <Skeleton className="h-6 w-5" /> : <p className="text-lg font-semibold sm:text-2xl">{error && !tasks.length ? "—" : tasks.filter(task => task.status === column.status).length}</p>}</div>)}</section>
       <div className="overflow-x-auto pb-1 [&_nav]:mt-3 [&_nav]:w-max [&_nav]:flex-nowrap [&_nav]:gap-2 [&_a]:whitespace-nowrap [&_a]:px-2.5 [&_a]:py-1.5 [&_a]:text-xs"><ProjectNavigation projectId={project.id} role={role} /></div>
     </header>

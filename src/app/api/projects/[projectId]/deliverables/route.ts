@@ -14,5 +14,5 @@ export async function GET(request: Request, { params }: Context) {
 }
 export async function POST(request: Request, { params }: Context) {
   const { projectId } = await params;
-  return assetHttp(projectId, ["PM"], async user => Response.json({ data: await createDeliverable(projectId, deliverableCreateSchema.parse(await request.json()), { actorId: user.id, ...getAuditRequestMetadata(request) }) }, { status: 201 }));
+  return assetHttp(projectId, ["PM"], async user => Response.json({ data: await createDeliverable(projectId, deliverableCreateSchema.parse(await request.json()), { actorId: user.id, ...getAuditRequestMetadata(request) }) }, { status: 201 }), request);
 }

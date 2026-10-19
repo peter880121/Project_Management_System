@@ -24,5 +24,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ del
       return Response.json({ data: { queued: true } });
     }
     return Response.json({ data: await mutateDeliverable(id, operation === "submit" ? "submit" : "review", operation === "submit" ? submitSchema.parse(body) : reviewSchema.parse(body), actor) });
-  });
+  }, request);
 }

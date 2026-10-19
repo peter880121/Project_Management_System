@@ -2,6 +2,8 @@ import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import { readFileSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -27,7 +29,8 @@ const testDatabaseUrl = new URL(sourceUrl);
 testDatabaseUrl.pathname = `/${databaseName}`;
 
 const admin = new PrismaClient({ datasources: { db: { url: adminUrl.toString() } } });
-const nextCli = "node_modules/next/dist/bin/next";
+const nextDistDir = `.next/auth-http-${databaseName}`;
+const originalTypes = readFileSync("next-env.d.ts", "utf8");
 const prismaCli = "node_modules/prisma/build/index.js";
 const port = 4417;
 const endpoint = `http://127.0.0.1:${port}/api/auth/register`;
@@ -102,15 +105,19 @@ async function withDatabase<T>(run: (db: PrismaClient) => Promise<T>): Promise<T
 describe.sequential("POST /api/auth/register over HTTP with real MySQL", () => {
   beforeAll(async () => {
     await resetIsolatedDatabase();
-    server = spawn(process.execPath, [nextCli, "dev", "--hostname", "127.0.0.1", "-p", String(port)], {
+    server = spawn(process.execPath, ["tests/fixtures/next-dev-server.mjs"], {
       cwd: process.cwd(),
       env: {
         ...process.env,
         NODE_ENV: "development",
+        // Never share compilation artifacts with a running demo or Playwright server.
+        NEXT_DIST_DIR: nextDistDir,
+        E2E_APP_PORT: String(port),
         DATABASE_URL: testDatabaseUrl.toString(),
         REGISTRATION_INVITE_CODE: inviteCode,
       },
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
     const collect = (chunk: Buffer) => { serverOutput = `${serverOutput}${chunk.toString()}`.slice(-8000); };
     server.stdout?.on("data", collect);
@@ -124,7 +131,11 @@ describe.sequential("POST /api/auth/register over HTTP with real MySQL", () => {
   }, 120_000);
 
   afterAll(async () => {
-    server?.kill();
+    if (server && server.exitCode === null && server.signalCode === null) { const stopped = once(server, "exit"); server.kill(); await stopped; }
+    const config = JSON.parse(readFileSync("tsconfig.json", "utf8"));
+    config.include = config.include.filter((entry: string) => !entry.startsWith(`${nextDistDir}/`));
+    writeFileSync("tsconfig.json", `${JSON.stringify(config, null, 2)}\n`);
+    if (readFileSync("next-env.d.ts", "utf8").includes(nextDistDir)) writeFileSync("next-env.d.ts", originalTypes);
     await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS \`${databaseName}\``);
     await admin.$disconnect();
   });

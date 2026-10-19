@@ -1,11 +1,11 @@
 import { Prisma, type Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { AuthenticatedUser } from "./rbac";
-import { lockProject, lockUsers } from "./transaction-locks";
+import { lockProjectForWrite, lockUsers } from "./transaction-locks";
 export class ProjectAccessError extends Error { constructor(message = "无权访问此项目", readonly status = 403) { super(message); } }
 /** Serialize role revocation with the business commit; HTTP checks alone can become stale. */
 export async function lockBusinessActor(tx: Prisma.TransactionClient, actorId: string, roles: readonly Role[], projectId?: string, relatedUserIds: readonly string[] = []) {
-  if (projectId) await lockProject(tx, projectId);
+  if (projectId) await lockProjectForWrite(tx, projectId);
   if (relatedUserIds.length) await lockUsers(tx, [actorId, ...relatedUserIds]);
   const [actor] = await tx.$queryRaw<{ role: Role; status: string; isSystem: boolean }[]>`SELECT role, status, isSystem FROM User WHERE id = ${actorId} FOR UPDATE`;
   if (!actor || actor.status !== "ACTIVE" || actor.isSystem || !roles.includes(actor.role)) throw new ProjectAccessError("当前角色无权执行此操作");

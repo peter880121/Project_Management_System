@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ProjectNotifications } from "@/components/projects/project-notifications";
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { ChevronDown, ChevronRight, Menu, UserRound } from "lucide-react";
 import { useBreadcrumbs } from "./breadcrumb-context";
@@ -52,6 +53,7 @@ export function AppTopbar({ user, openNavigation, navigationOpen, navigationTrig
     <div className="min-w-0 flex-1 overflow-x-auto">
       {items.length > 0 && <nav aria-label="面包屑"><ol className="flex w-max items-center gap-2 text-sm text-slate-600">{items.map((item, index) => <li key={index} className="flex items-center gap-2">{index > 0 && <ChevronRight aria-hidden="true" className="h-4 w-4 text-slate-400" />}{item.href && index < items.length - 1 ? <Link href={item.href} className="rounded hover:text-teal-800 hover:underline">{item.label}</Link> : <span aria-current={index === items.length - 1 ? "page" : undefined} className={index === items.length - 1 ? "font-medium text-slate-900" : undefined}>{item.label}</span>}</li>)}</ol></nav>}
     </div>
+    <ProjectNotifications />
     <div ref={container} className="relative shrink-0">
       <button ref={trigger} type="button" aria-label="用户菜单" aria-haspopup="menu" aria-controls="app-user-menu" aria-expanded={open} onClick={() => open ? close() : setOpen(true)} onKeyDown={event => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true); } }} className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-2 text-slate-700 hover:bg-slate-50"><span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-50 text-teal-800">{user.name.trim().slice(0, 1) || <UserRound className="h-4 w-4" />}</span><ChevronDown aria-hidden="true" className="h-4 w-4" /></button>
       {open && <div ref={menu} id="app-user-menu" role="menu" aria-label="用户菜单" onKeyDown={keyboard} className="absolute right-0 top-11 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-2 shadow-lg">

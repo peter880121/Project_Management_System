@@ -1,5 +1,6 @@
 "use client";
 
+import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useAiGeneration } from "@/components/use-ai-generation";
@@ -19,6 +20,7 @@ type SuggestedTask = {
 };
 
 export function WbsPanel({ projectId, sourceTaskId, initialRequest = "", onAccepted = async () => {}, onFeedback }: { projectId: string; sourceTaskId?: string; initialRequest?: string; onAccepted?: () => Promise<void>; onFeedback?: (message: string, kind: "success" | "error") => void }) {
+  const { capabilities } = useProjectCapabilities();
   const generation = useAiGeneration<WbsPayload>();
   const generationLock = useRef(false);
   const reviewed = useRef(new Set<string>());
@@ -96,12 +98,12 @@ export function WbsPanel({ projectId, sourceTaskId, initialRequest = "", onAccep
     <h2 className="text-xl font-semibold">智能 WBS 分解</h2>
     <p className="mt-2 max-w-3xl text-sm text-slate-600">Agent 会参考本项目文档的需求与验收条件，以及已完成任务的实际工时与交付时间。生成内容进入待确认列表，只有 PM 逐条采纳后才会建立正式任务。</p>
     <AiGenerationPreview {...generation} onStop={generation.stop} />
-    <form onSubmit={generate} className="mt-4 space-y-3">
+    <form onSubmit={generate} className="mt-4"><fieldset disabled={capabilities?.writable === false} className="min-w-0 space-y-3">
       <label htmlFor="wbs-request" className="block text-sm font-medium">需求描述</label>
       <textarea id="wbs-request" minLength={10} maxLength={8000} required rows={4} value={request} onChange={(event) => setRequest(event.target.value)} className="w-full rounded-md border border-slate-300 bg-white p-3" placeholder="描述待拆解的软件交付需求、验收条件和约束……" />
       <label className="flex items-start gap-2 text-sm text-slate-700"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} required className="mt-1"/><span>我确认输入仅包含合成数据，不含真实患者信息。需求文本及检索命中的项目文档片段会发送给配置的模型服务。</span></label>
-      <button disabled={busy || !confirmed} className="rounded-md bg-indigo-800 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-900 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "处理中…" : "生成 WBS 建议"}</button>
-    </form>
+      <button disabled={capabilities?.writable === false || busy || !confirmed} className="rounded-md bg-indigo-800 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-900 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "处理中…" : "生成 WBS 建议"}</button>
+    </fieldset></form>
     {generation.stopped && <button type="button" onClick={() => void recover()} className="mt-3 text-sm text-teal-800">核对已保存结果</button>}
     {error && <p role="alert" className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p>}
     {manualFallback && <Link href={`/projects/${projectId}/tasks/new`} className="mt-3 inline-flex text-sm font-medium text-teal-800">手动创建任务</Link>}
@@ -117,7 +119,7 @@ export function WbsPanel({ projectId, sourceTaskId, initialRequest = "", onAccep
         <p>{prerequisiteMessage(suggestion.prerequisites) || "前置任务均已采纳，可以采纳当前建议。"}</p>
         {suggestion.prerequisites.filter(d => d.status === "PENDING" && suggestions.some(s => s.id === d.id)).map(d => <a key={d.id} href={`#suggestion-${d.id}`} className="mr-2 mt-2 inline-block rounded-none border-0 bg-transparent p-0 text-teal-800 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-teal-600">查看前置任务：{d.title}</a>)}
       </div>}
-      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4"><button type="button" disabled={busy || !!suggestion.prerequisites?.some(d => d.status !== "ACCEPTED")} onClick={() => void review(suggestion.id, "ACCEPTED")} className="min-h-10 rounded-md bg-teal-800 px-4 py-2 text-sm text-white disabled:opacity-50">采纳为任务</button><button type="button" disabled={busy} onClick={() => void review(suggestion.id, "REJECTED")} className="min-h-10 rounded-md border border-slate-300 px-4 py-2 text-sm disabled:opacity-50">拒绝</button></div>
+      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4"><button type="button" disabled={capabilities?.writable === false || busy || !!suggestion.prerequisites?.some(d => d.status !== "ACCEPTED")} onClick={() => void review(suggestion.id, "ACCEPTED")} className="min-h-10 rounded-md bg-teal-800 px-4 py-2 text-sm text-white disabled:opacity-50">采纳为任务</button><button type="button" disabled={capabilities?.writable === false || busy} onClick={() => void review(suggestion.id, "REJECTED")} className="min-h-10 rounded-md border border-slate-300 px-4 py-2 text-sm disabled:opacity-50">拒绝</button></div>
     </article>)}</div>}
   </section>;
 }

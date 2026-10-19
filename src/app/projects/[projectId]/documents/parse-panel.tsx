@@ -1,4 +1,5 @@
 "use client";
+import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { DocumentIndexPanel } from "./index-panel";
@@ -6,6 +7,7 @@ type Job = { id: string; version: number; status: string; phase: string; errorCo
 type Preview = { version: number; markdown: string; blocks: { text: string; page: number | null; type: string }[]; modelVersion: string; completedAt: string; previewTruncated: boolean; totalBlocks: number };
 const names: Record<string, string> = { NOT_REQUESTED: "尚未申请解析", QUEUED: "等待 worker", RUNNING: "解析中", SUCCEEDED: "解析成功", FAILED: "解析失败" };
 export function ParsePanel({ documentId, parseStatus, parseVersion, parsedVersion, canManage, refresh }: { documentId: string; parseStatus: string; parseVersion: number; parsedVersion: number | null; canManage: boolean; refresh: () => Promise<void> }) {
+  const { capabilities } = useProjectCapabilities();
   const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]); const [preview, setPreview] = useState<Preview | null>(null);
   async function queue(event: FormEvent<HTMLFormElement>) {
@@ -36,7 +38,7 @@ export function ParsePanel({ documentId, parseStatus, parseVersion, parsedVersio
   return <section className="mt-4 space-y-3 rounded-lg border bg-slate-50 p-4" aria-label="文档解析">
     <h3 className="font-semibold">{names[parseStatus]} · 当前申请 v{parseVersion}</h3>
     {parsedVersion !== null && <p className="text-sm">可预览成功版本 v{parsedVersion}；新解析失败不会覆盖旧结果。</p>}
-    {canManage && !["QUEUED", "RUNNING"].includes(parseStatus) && <form onSubmit={(event) => void queue(event)} className="space-y-2"><label className="flex items-start gap-2 text-sm"><input required type="checkbox" />确认将此合成 PDF 发送到 MinerU 云端处理，文件不含真实患者信息。</label><Button disabled={busy}>{parseStatus === "FAILED" ? "重试解析" : parseVersion ? "重新解析" : "开始解析"}</Button></form>}
+    {canManage && !["QUEUED", "RUNNING"].includes(parseStatus) && <form onSubmit={(event) => void queue(event)} className="space-y-2"><label className="flex items-start gap-2 text-sm"><input required type="checkbox" />确认将此合成 PDF 发送到 MinerU 云端处理，文件不含真实患者信息。</label><Button disabled={capabilities?.writable === false || busy}>{parseStatus === "FAILED" ? "重试解析" : parseVersion ? "重新解析" : "开始解析"}</Button></form>}
     <div className="flex gap-3"><Button disabled={busy} onClick={() => void history()}>刷新解析任务</Button>{parsedVersion !== null && <Button disabled={busy} onClick={() => void open(parsedVersion)}>预览解析结果</Button>}</div>
     {jobs.map((job) => <div key={job.id} className="rounded border p-2 text-sm">v{job.version} · {names[job.status]} · {job.modelVersion}{job.errorCode && <p>失败代码：{job.errorCode}</p>}{job.status === "SUCCEEDED" && <button className="ml-3 text-teal-800 underline" disabled={busy} onClick={() => void open(job.version)}>查看 v{job.version}</button>}</div>)}
     {preview && <div className="space-y-3"><h4 className="font-semibold">解析预览 v{preview.version}</h4>{preview.previewTruncated && <p className="text-sm text-amber-800">长文仅展示部分内容，完整结果已保留；当前预览不代表全文。</p>}<pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded border bg-white p-3 text-sm">{preview.markdown}</pre><details><summary>结构化内容与来源页码（展示 {preview.blocks.length}/{preview.totalBlocks}）</summary>{preview.blocks.length === 0 && <p>结果没有可用页码信息，不推测来源页。</p>}{preview.blocks.map((block, index) => <p key={index} className="mt-2 whitespace-pre-wrap text-sm">{block.page === null ? "无页码" : `第 ${block.page} 页`} · {block.text}</p>)}</details></div>}

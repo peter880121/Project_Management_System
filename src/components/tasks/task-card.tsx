@@ -1,4 +1,5 @@
 "use client";
+import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import Link from "next/link";
 import { useRef } from "react";
 import { Play, Pause, RotateCcw, Check, UserRound } from "lucide-react";
@@ -6,7 +7,8 @@ import { TaskAiActions } from "../task-ai-actions";
 import { canUpdateTask, taskPhase, taskStatusOptions, type BoardTask, type TaskStatus } from "./board-types";
 
 export const statusLabels: Record<TaskStatus, string> = { TODO: "退回待办", IN_PROGRESS: "开始 / 恢复", BLOCKED: "标记受阻", DONE: "完成" };
-export function TaskCard({ task, role, userId, busy, onOpen, onComplete, onStatus, showPhase = true }: { task: BoardTask; role: string; userId: string; busy: boolean; showPhase?: boolean; onOpen: (mode?: "wbs" | "compliance") => void; onComplete: () => void; onStatus: (status: Exclude<TaskStatus, "DONE">) => void }) {
+export function TaskCard({ task, role: initialRole, userId, busy, onOpen, onComplete, onStatus, showPhase = true }: { task: BoardTask; role: string; userId: string; busy: boolean; showPhase?: boolean; onOpen: (mode?: "wbs" | "compliance") => void; onComplete: () => void; onStatus: (status: Exclude<TaskStatus, "DONE">) => void }) {
+  const { capabilities } = useProjectCapabilities(); const role = capabilities?.role ?? initialRole;
   const phase = taskPhase(task.description);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   return <article tabIndex={0} aria-label={`任务卡片：${task.title}`} data-task-card={task.id} onPointerDown={event => { pointer.current = { x: event.clientX, y: event.clientY }; }} onClick={event => { if (pointer.current && Math.hypot(event.clientX - pointer.current.x, event.clientY - pointer.current.y) > 5) return; onOpen(); }} onKeyDown={event => { if (event.target === event.currentTarget && ["Enter", " "].includes(event.key)) { event.preventDefault(); onOpen(); } }} className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm transition-colors hover:border-teal-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700">
@@ -20,7 +22,7 @@ export function TaskCard({ task, role, userId, busy, onOpen, onComplete, onStatu
         {canUpdateTask(task, role, userId) && taskStatusOptions(task.status, role).map(status => {
           const Icon = status === "IN_PROGRESS" ? Play : status === "BLOCKED" ? Pause : status === "DONE" ? Check : RotateCcw;
           const label = task.status === "DONE" && status === "IN_PROGRESS" ? "重新打开" : statusLabels[status];
-          return <button key={status} type="button" title={label} aria-label={label} disabled={busy} onClick={event => { event.stopPropagation(); if (status === "DONE") onComplete(); else onStatus(status); }} className="inline-flex size-8 items-center justify-center rounded-md border-0 bg-slate-50 p-0 text-slate-500 hover:bg-teal-50 hover:text-teal-800 disabled:opacity-40"><Icon aria-hidden="true" className="size-3.5" /></button>;
+          return <button key={status} type="button" title={label} aria-label={label} disabled={busy || capabilities?.canEditTasks === false} onClick={event => { event.stopPropagation(); if (status === "DONE") onComplete(); else onStatus(status); }} className="inline-flex size-8 items-center justify-center rounded-md border-0 bg-slate-50 p-0 text-slate-500 hover:bg-teal-50 hover:text-teal-800 disabled:opacity-40"><Icon aria-hidden="true" className="size-3.5" /></button>;
         })}
       </div>
     </div>

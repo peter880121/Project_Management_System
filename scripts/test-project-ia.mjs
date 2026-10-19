@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { PrismaClient } from "@prisma/client";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createS3Fixture } from "../tests/fixtures/s3-server.mjs";
 
@@ -16,11 +16,13 @@ const adminUrl = new URL(source); adminUrl.username = "root"; adminUrl.password 
 const admin = new PrismaClient({ datasources: { db: { url: adminUrl.toString() } } });
 const username = decodeURIComponent(source.username);
 if (!/^[a-zA-Z0-9_-]+$/.test(username)) throw new Error("Unexpected database account");
-const env = { ...process.env, NODE_ENV: "development", DATABASE_URL: target.toString(), NEXT_DIST_DIR: ".next/ia-acceptance", LOCAL_DEV_SEED_PASSWORD: randomBytes(24).toString("base64url"), REGISTRATION_INVITE_CODE: randomBytes(24).toString("base64url"), E2E_BASE_URL: "http://127.0.0.1:4514" };
+const env = { ...process.env, NODE_ENV: "development", DATABASE_URL: target.toString(), NEXT_DIST_DIR: `.next/ia-${Date.now()}`, LOCAL_DEV_SEED_PASSWORD: randomBytes(24).toString("base64url"), REGISTRATION_INVITE_CODE: randomBytes(24).toString("base64url"), E2E_BASE_URL: "http://127.0.0.1:4514" };
 let app;
+let stoppingApp = false;
 let storageFixture;
 const originalTypes = readFileSync("next-env.d.ts", "utf8").replace(`./${env.NEXT_DIST_DIR}/types/routes.d.ts`, "./.next/types/routes.d.ts");
 async function stopApp() {
+  stoppingApp = true;
   if (app && app.exitCode === null && app.signalCode === null) {
     const stopped = once(app, "exit"); app.kill(); await stopped;
   }
@@ -48,8 +50,13 @@ try {
   storageFixture = createS3Fixture(); storageFixture.listen(0, "127.0.0.1"); await once(storageFixture, "listening");
   Object.assign(env, { MINIO_ENDPOINT: "127.0.0.1", MINIO_PORT: String(storageFixture.address().port), MINIO_USE_SSL: "false", MINIO_ACCESS_KEY: randomBytes(12).toString("hex"), MINIO_SECRET_KEY: randomBytes(24).toString("hex"), MINIO_BUCKET: "synthetic-documents", DOCUMENT_E2E_STORAGE_URL: `http://127.0.0.1:${storageFixture.address().port}` });
   // Start the server directly so Windows cleanup targets one owned process, without a CLI worker tree.
-  app = spawn(process.execPath, ["tests/fixtures/next-dev-server.mjs"], { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  stoppingApp = false;
+  const appEnv = { ...env, NODE_OPTIONS: env.NODE_OPTIONS || "--max-old-space-size=6144" };
+  app = spawn(process.execPath, ["tests/fixtures/next-dev-server.mjs"], { env: appEnv, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let log = ""; const collect = chunk => { log = (log + chunk.toString()).slice(-4000); }; app.stdout.on("data", collect); app.stderr.on("data", collect);
+  app.on("exit", (code, signal) => {
+    if (!stoppingApp) { mkdirSync("test-results", { recursive: true }); writeFileSync("test-results/ia-server-last.log", log); console.error(`Acceptance server exited unexpectedly (${code ?? signal}); see test-results/ia-server-last.log`); }
+  });
   let ready = false;
   for (let attempt = 0; attempt < 120; attempt++) {
     if (app.exitCode !== null) throw new Error("Acceptance server exited early");

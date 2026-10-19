@@ -3,6 +3,7 @@ import Link from "next/link";
 export function ProjectNavigation({ projectId, role }: { projectId: string; role: string }) {
   const base = `/projects/${projectId}`;
   const links = [
+    { href: `${base}/acceptance`, label: "验收与归档 →" },
     { href: `${base}/deliverables`, label: "交付物资产 →" },
     { href: `${base}/meetings`, label: "会议纪要 →" },
     { href: `${base}/planning`, label: "排期与人员容量 →" },

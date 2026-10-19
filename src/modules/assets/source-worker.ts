@@ -2,16 +2,16 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { SYSTEM_USER_ID } from "@/lib/system-user";
 import { recordAudit } from "@/modules/audit/service";
-import { lockProject, lockUsers } from "@/modules/auth/transaction-locks";
+import { lockProjectForWrite, lockUsers } from "@/modules/auth/transaction-locks";
 import { getObjectStorageClient } from "@/modules/documents/storage";
 export async function syncAssetSourceTick(put = async (key: string, bytes: Buffer, sha256: string) => {
   const bucket = process.env.MINIO_BUCKET; if (!bucket) throw new Error("Storage missing");
   await getObjectStorageClient().putObject(bucket, key, bytes, bytes.length, { "Content-Type": "text/markdown", "X-Amz-Meta-Sha256": sha256 });
 }) {
   const job = await prisma.$transaction(async tx => {
-    const now = new Date(); const item = await tx.assetSourceJob.findFirst({ where: { status: { in: ["QUEUED", "RUNNING", "FAILED"] }, attempts: { lt: 5 }, nextRunAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, include: { document: true }, orderBy: { nextRunAt: "asc" } });
+    const now = new Date(); const item = await tx.assetSourceJob.findFirst({ where: { document: { project: { status: { not: "ARCHIVED" } } }, status: { in: ["QUEUED", "RUNNING", "FAILED"] }, attempts: { lt: 5 }, nextRunAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, include: { document: true }, orderBy: { nextRunAt: "asc" } });
     if (!item) return null;
-    await lockProject(tx, item.document.projectId);
+    await lockProjectForWrite(tx, item.document.projectId, true);
     const token = randomUUID();
     const changed = await tx.assetSourceJob.updateMany({ where: { id: item.id, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }], status: { not: "COMPLETED" } }, data: { status: "RUNNING", leaseToken: token, leaseUntil: new Date(Date.now() + 60000) } });
     return changed.count ? { ...item, token } : null;
@@ -20,7 +20,7 @@ export async function syncAssetSourceTick(put = async (key: string, bytes: Buffe
   let success = false;
   try { await put(job.document.minioKey, Buffer.from(job.document.parsedText ?? ""), job.document.sha256!); success = true; } catch { /* durable retry below; never log document contents */ }
   await prisma.$transaction(async tx => {
-    await lockProject(tx, job.document.projectId); await lockUsers(tx, [SYSTEM_USER_ID]);
+    await lockProjectForWrite(tx, job.document.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
     const changed = await tx.assetSourceJob.updateMany({ where: { id: job.id, leaseToken: job.token, leaseUntil: { gt: new Date() } }, data: { status: success ? "COMPLETED" : "FAILED", attempts: { increment: 1 }, nextRunAt: new Date(Date.now() + Math.min(300000, 10000 * 2 ** job.attempts)), leaseToken: null, leaseUntil: null } });
     if (!changed.count) return;
     if (success) {

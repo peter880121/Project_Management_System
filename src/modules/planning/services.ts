@@ -5,7 +5,7 @@ import { calculateWeeklyLoad, wouldCreateCycle } from "./rules";
 import { capacitySchema, scheduleSchema, PlanningError } from "./schemas";
 import * as repository from "./repositories";
 import { assertProjectAccessTx, ProjectAccessError, visibleProjectWhere } from "@/modules/auth/project-access";
-import { lockProject, lockUsers } from "@/modules/auth/transaction-locks";
+import { lockProjectForWrite, lockUsers } from "@/modules/auth/transaction-locks";
 type Actor = { actorId: string } & AuditRequestMetadata;
 export async function updateTaskSchedule(id: string, input: z.infer<typeof scheduleSchema>, actor: Actor) {
   const scope = await repository.planningTaskProject(id); if (!scope) throw new PlanningError("任务不存在", 404);
@@ -32,7 +32,7 @@ export async function updateMemberCapacity(userId: string, input: z.infer<typeof
   const sharedProject = userId === actor.actorId ? null : await prisma.project.findFirst({ where: { AND: [visibleProjectWhere({ id: actor.actorId, role: "PM" }), { OR: [{ ownerId: userId }, { members: { some: { userId, active: true } } }, { tasks: { some: { assigneeId: userId } } }] }] }, select: { id: true } });
   if (userId !== actor.actorId && !sharedProject) throw new ProjectAccessError("只能维护所参与项目的成员容量");
   return prisma.$transaction(async (tx) => {
-    if (sharedProject) await lockProject(tx, sharedProject.id);
+    if (sharedProject) await lockProjectForWrite(tx, sharedProject.id);
     await lockUsers(tx, [actor.actorId, userId]);
     await repository.lockPlanningActor(tx, actor.actorId);
     const user = await repository.findMember(tx, userId); if (!user || user.isSystem || user.status !== "ACTIVE") throw new PlanningError("仅可设置有效成员容量", 400);

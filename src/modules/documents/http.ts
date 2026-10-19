@@ -1,4 +1,5 @@
 import { Prisma, type Role } from "@prisma/client";
+import { freezeErrorResponse } from "@/modules/projects/freeze";
 import { getCurrentUser } from "@/modules/auth/session";
 import { requireRole, type AuthenticatedUser } from "@/modules/auth/rbac";
 import { DocumentError } from "./validation";
@@ -10,6 +11,7 @@ export async function documentHttp(roles: Role[], action: (actor: AuthenticatedU
     if (denied || !actor) return denied!;
     return await action(actor);
   } catch (error) {
+    const frozen = freezeErrorResponse(error); if (frozen) return frozen;
     if (error instanceof ProjectAccessError) return Response.json({ error: error.message }, { status: error.status });
     if (error instanceof DocumentError) return Response.json({ error: error.message }, { status: error.status });
     if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2034"].includes(error.code)) return Response.json({ error: "上传已记录或状态冲突，请刷新", }, { status: 409 });
