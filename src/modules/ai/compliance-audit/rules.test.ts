@@ -7,6 +7,15 @@ function complete(): ComplianceAuditInput {
   return { auditLogs: [{ id: id(4), entityId: id(2), entityType: "Task", action: "TASK_CREATED", createdAt: new Date() }], requirements: [{ id: id(1), version: 2, status: "APPROVED", updatedAt: new Date() }], tasks: [{ id: id(2), requirementId: id(1), reviewedRequirementVersion: 2, status: "DONE", updatedAt: new Date() }], testCases: [{ id: id(3), requirementId: id(1), reviewedRequirementVersion: 2, status: "PASSED" }] };
 }
 describe("deterministic compliance rules", () => {
+  it("recognizes secondary task links without inventing missing implementation work", () => {
+    const data = complete(); const second = id(8);
+    data.requirements.push({ ...data.requirements[0], id: second });
+    data.testCases.push({ ...data.testCases[0], id: id(9), requirementId: second });
+    data.taskRequirementLinks = [{ id: id(10), taskId: data.tasks[0].id, requirementId: second }];
+    expect(findTraceabilityIssues(data)).toEqual([]);
+    data.tasks[0].status = "CANCELLED";
+    expect(findTraceabilityIssues(data).filter(f => f.code === "APPROVED_REQUIREMENT_WITHOUT_TASK")).toHaveLength(2);
+  });
   it("does not flag a complete, reviewed chain", () => expect(findTraceabilityIssues(complete())).toEqual([]));
   it("detects all six gap types and marks missing audit provenance", () => {
     const data = complete();

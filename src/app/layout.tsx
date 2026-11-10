@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
+// Load scoped chart styles with the application shell, before lazy chart JavaScript.
+import "@/components/planning/gantt-scoped.css";
+import "@/components/planning/gantt-overrides.css";
 import { AppHeader } from "@/components/app-header";
 import { AccountActionProvider } from "@/components/account-action-lock";
 import { BreadcrumbProvider } from "@/components/layout/breadcrumb-context";

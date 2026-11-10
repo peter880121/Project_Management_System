@@ -1,3 +1,5 @@
+import { typescriptRequire } from "../scripts/lib/load-typescript.mjs";
+import { fileURLToPath } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
@@ -7,6 +9,7 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const prisma = new PrismaClient();
+const { taskPlanData } = typescriptRequire(fileURLToPath(new URL("..", import.meta.url)))(fileURLToPath(new URL("../src/modules/tasks/plan.ts", import.meta.url)));
 const id = (value) => `00000000-0000-4000-8000-${value.toString(16).padStart(12, "0")}`;
 const now = new Date("2026-10-12T00:00:00.000Z");
 
@@ -100,7 +103,7 @@ async function main() {
     }
 
     for (const task of tasks) {
-      await tx.task.upsert({ where: { id: task.id }, create: task, update: {} });
+      await tx.task.upsert({ where: { id: task.id }, create: { ...task, ...taskPlanData({ phase: "交付执行", estimateHours: task.estimateHours, dueDate: task.dueDate.toISOString().slice(0, 10), plannedStartDate: null }, task.description) }, update: {} });
       if (task.status === "DONE") {
         await tx.task.updateMany({ where: { id: task.id, status: "DONE", actualHours: null }, data: { actualHours: task.actualHours, completedAt: task.completedAt, createdAt: task.createdAt } });
       }

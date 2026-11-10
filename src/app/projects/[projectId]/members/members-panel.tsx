@@ -2,17 +2,19 @@
 import { useProjectCapabilities } from "@/components/projects/capabilities-context";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-type Snapshot = { ownerId: string; canManage: boolean; members: { userId: string; active: boolean; version: number; user: { name: string; role: string } }[]; candidates: { id: string; name: string; role: string }[] };
-export function MembersPanel({ projectId }: { projectId: string }) {
+import Link from "next/link";
+type Snapshot = { ownerId: string; canManage: boolean; members: { userId: string; active: boolean; canOverrideAcceptance: boolean; version: number; user: { name: string; role: string } }[]; candidates: { id: string; name: string; role: string }[] };
+export function MembersPanel({ projectId, onboarding = false, navigationBusy = false, onSaved }: { projectId: string; onboarding?: boolean; navigationBusy?: boolean; onSaved?: () => void }) {
   const { capabilities } = useProjectCapabilities(); const canManage = capabilities?.canManageMembers ?? true;
   const [data, setData] = useState<Snapshot>(); const [selected, setSelected] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => { const response = await fetch(`/api/projects/${projectId}/members`); const body = await response.json(); if (!response.ok) throw new Error(body.error); setData(body); }, [projectId]);
   useEffect(() => { void load().catch((e) => setError(String(e.message))); }, [load]);
-  async function save(userId: string, active: boolean) { setBusy(true); setError(""); try { const response = await fetch(`/api/projects/${projectId}/members`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId, active, expectedVersion: data?.members.find((m) => m.userId === userId)?.version ?? 0 }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); await load(); } catch (e) { setError(e instanceof Error ? e.message : "授权失败"); } finally { setBusy(false); } }
+  async function save(userId: string, active: boolean, canOverrideAcceptance?: boolean) { setBusy(true); setError(""); try { const response = await fetch(`/api/projects/${projectId}/members`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId, active, ...(canOverrideAcceptance !== undefined ? { canOverrideAcceptance } : {}), expectedVersion: data?.members.find((m) => m.userId === userId)?.version ?? 0 }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); await load(); onSaved?.(); } catch (e) { setError(e instanceof Error ? e.message : "授权失败"); } finally { setBusy(false); } }
   const activeMembers = data?.members.filter(member => member.active) ?? [];
   const ownerName = data?.members.find(member => member.userId === data.ownerId)?.user.name
     ?? data?.candidates.find(user => user.id === data.ownerId)?.name;
   return <section className="space-y-6">
+    {onboarding && <section aria-label="新项目引导" className="space-y-3 rounded-xl border border-teal-200 bg-teal-50 p-5"><p className="text-sm font-semibold text-teal-900">第 1 步 / 共 2 步 · 配置项目成员</p><p className="text-sm leading-7 text-slate-700">配置项目访问权限后，直接进入任务管理分配负责人和安排计划。人员容量可稍后补充。</p><Link aria-disabled={busy || navigationBusy || !data || !!error} tabIndex={busy || navigationBusy || !data || !!error ? -1 : undefined} onClick={event => { if (busy || navigationBusy || !data || error) event.preventDefault(); }} className={`inline-block rounded-lg bg-teal-800 px-4 py-2 text-sm font-semibold text-white ${busy || navigationBusy || !data || error ? "opacity-40" : ""}`} href={`/projects/${projectId}/board?onboarding=1`}>完成人员配置，进入任务管理 →</Link></section>}
     {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
     {!data && !error && <p role="status" className="text-sm text-slate-600">正在加载项目成员…</p>}
     {data && <>
@@ -45,10 +47,12 @@ export function MembersPanel({ projectId }: { projectId: string }) {
                   : <Button type="button" variant="outline" size="sm" disabled={busy || !canManage} onClick={() => void save(member.userId, false)}>移出</Button>}</td>}
               </tr>)}
               {activeMembers.length === 0 && <tr><td colSpan={data.canManage ? 4 : 3} className="px-5 py-10 text-center leading-6 text-slate-500">暂无额外授权成员，负责人仍拥有项目访问权。</td></tr>}
+              {capabilities?.role === "ADMIN" && activeMembers.filter(member => member.user.role === "PM").map(member => <tr key={`override:${member.userId}`}><td colSpan={4} className="bg-amber-50/70 px-5 py-3 text-xs text-amber-950"><span className="mr-4">{member.user.name} · 验收例外提交权限：{member.canOverrideAcceptance ? "已授权" : "未授权"}</span><Button size="sm" variant="outline" disabled={busy || !canManage} onClick={() => void save(member.userId, true, !member.canOverrideAcceptance)}>{member.canOverrideAcceptance ? "撤销例外权限" : "授予例外权限"}</Button></td></tr>)}
             </tbody>
           </table>
         </div>
       </div>
+      {capabilities?.role === "ADMIN" && data.ownerId && !data.members.some(m => m.userId === data.ownerId && m.active) && data.candidates.some(c => c.id === data.ownerId && c.role === "PM") && <Button disabled={busy || !canManage} variant="outline" onClick={() => void save(data.ownerId, true, true)}>授予负责人验收例外权限</Button>}
       {data.canManage && <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
         <h2 className="text-base font-semibold">添加项目成员</h2>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">

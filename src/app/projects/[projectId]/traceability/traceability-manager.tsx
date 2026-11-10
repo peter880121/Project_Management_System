@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { VersionReview } from "./version-review";
 
 type TestCase = { id: string; title: string; status: string; updatedAt: string; reviewedRequirementVersion: number | null };
-type Requirement = { id: string; title: string; content: string; status: string; version: number; testCases: TestCase[] };
+type Requirement = { id: string; title: string; content: string; status: string; version: number; managed?: boolean; testCases: TestCase[] };
 type TraceData = { requirements: Requirement[]; tasks: { id: string; title: string; requirementId: string | null; updatedAt: string; reviewedRequirementVersion: number | null }[] };
 const field = "mt-1 block w-full rounded border border-slate-300 p-2";
 const requirementStatuses = ["DRAFT", "IN_REVIEW", "APPROVED", "RETIRED"];
@@ -85,11 +85,11 @@ export function TraceabilityManager({ projectId, role, initial }: { projectId: s
     {message && feedback?.kind !== "testCase" && <p role={failed ? "alert" : "status"} className={failed ? "text-red-700" : "text-teal-800"}>{message}</p>}
     <fieldset disabled={capabilities?.writable === false || busy} className="space-y-6">
       {role === "PM" && <section className="space-y-3 rounded-xl border bg-white p-5"><h2 className="text-xl font-semibold">历史检索索引</h2><p className="text-sm text-slate-600">关键词降级会保留待同步任务。服务恢复后可重试，每次最多 5 项，累计失败 5 次后停止自动选取。</p><Button type="button" onClick={() => void retryHistory()}>重试历史任务索引</Button></section>}
-      {role === "PM" && <form onSubmit={(event) => void save(event, { kind: "requirement" }, false)} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-xl font-semibold">新建需求</h2>{requirementFields()}<div className="pt-2"><Button>创建需求</Button></div></form>}
+      <section className="rounded-xl border border-teal-200 bg-teal-50 p-5"><h2 className="font-semibold">需求统一管理</h2><p className="my-3 text-sm text-slate-600">新需求、图片、预计完成日期、评审和变更统一从需求管理维护。</p><Link className="font-medium text-teal-800 underline" href={`/projects/${projectId}/requirements`}>进入需求管理 →</Link></section>
       {initial.requirements.length === 0 && <p>暂无需求，请由 PM 创建。</p>}
       {initial.requirements.map((requirement) => <section key={`${requirement.id}-${requirement.version}`} className="space-y-4 rounded-xl border bg-white p-5">
         <h2 className="text-xl font-semibold">{requirement.title} · v{requirement.version}</h2>
-        {role === "PM" ? <form className="space-y-3" onSubmit={(event) => void save(event, { kind: "requirement", id: requirement.id, expectedVersion: requirement.version }, true)}>{requirementFields(requirement)}<Button>保存需求</Button></form> : <><p>{requirement.status}</p><p className="whitespace-pre-wrap">{requirement.content}</p></>}
+        {role === "PM" && !requirement.managed ? <form className="space-y-3" onSubmit={(event) => void save(event, { kind: "requirement", id: requirement.id, expectedVersion: requirement.version }, true)}>{requirementFields(requirement)}<Button>保存需求</Button></form> : <><p>{requirement.status}</p><p className="whitespace-pre-wrap">{requirement.content}</p><Link href={`/projects/${projectId}/requirements?requirementId=${requirement.id}`} className="text-sm text-teal-800 underline">查看需求版本与验证证据</Link></>}
         <h3 className="font-semibold">关联任务</h3>
         <ul>{initial.tasks.filter((task) => task.requirementId === requirement.id).map((task) => <li key={task.id}><Link className="text-link text-teal-800 hover:underline" href={`/tasks/${task.id}`}>{task.title}</Link><VersionReview projectId={projectId} entityType="Task" entityId={task.id} requirementId={requirement.id} version={requirement.version} updatedAt={task.updatedAt} reviewedVersion={task.reviewedRequirementVersion} canReview={role === "QA"} /></li>)}</ul>
         <h3 className="font-semibold">测试用例</h3>

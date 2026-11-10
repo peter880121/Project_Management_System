@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { ProjectFrozenError } from "@/modules/projects/freeze";
+import { assertProjectStatusWritable } from "@/modules/projects/freeze";
 
 /** Existing project -> all referenced users (UUID order) -> membership/business rows.
  * Global user operations lock users only. Never acquire an existing project after users.
@@ -12,8 +12,7 @@ export async function lockProject(tx: Prisma.TransactionClient, projectId: strin
 /** Locking read sees a concurrent archive commit, including under RepeatableRead. */
 export async function lockProjectForWrite(tx: Prisma.TransactionClient, projectId: string, worker = false) {
   const [project] = await tx.$queryRaw<{ status: string }[]>`SELECT id, status FROM Project WHERE id = ${projectId} FOR UPDATE`;
-  if (project?.status === "ARCHIVED") throw new ProjectFrozenError();
-  if (!worker && project?.status === "PENDING_ACCEPTANCE") throw new ProjectFrozenError(false);
+  assertProjectStatusWritable(project?.status, worker);
 }
 
 export async function lockUsers(tx: Prisma.TransactionClient, ids: readonly string[]) {

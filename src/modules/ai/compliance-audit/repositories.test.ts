@@ -3,10 +3,11 @@ const mocks = vi.hoisted(() => ({ transaction: vi.fn(), project: vi.fn(), tasks:
 vi.mock("../task-context", () => ({ loadAiTask: mocks.source }));
 vi.mock("@/lib/prisma", () => ({ prisma: { $transaction: mocks.transaction } }));
 import { loadComplianceSnapshot } from "./repositories";
-const tx = { project: { findUnique: mocks.project }, task: { findMany: mocks.tasks }, requirement: { findMany: mocks.requirements }, testCase: { findMany: mocks.cases }, auditLog: { findMany: mocks.logs } };
+const tx = { project: { findUnique: mocks.project }, task: { findMany: mocks.tasks }, requirement: { findMany: mocks.requirements }, testCase: { findMany: mocks.cases }, auditLog: { findMany: mocks.logs }, requirementTaskLink: { findMany: vi.fn() } };
 describe("bounded compliance snapshots", () => {
   beforeEach(() => {
     vi.resetAllMocks(); mocks.transaction.mockImplementation((callback) => callback(tx));
+    tx.requirementTaskLink.findMany.mockResolvedValue([]);
     mocks.project.mockResolvedValue({ id: "project" }); mocks.tasks.mockResolvedValue([]); mocks.requirements.mockResolvedValue([]); mocks.cases.mockResolvedValue([]); mocks.logs.mockResolvedValue([]);
   });
   it("pages business entities inside a consistent transaction and flags incomplete coverage", async () => {

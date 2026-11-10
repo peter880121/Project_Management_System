@@ -46,19 +46,19 @@ describe.sequential("meeting AI and task conversion, real MySQL rollback", () =>
     expect(JSON.stringify((await db.aiSuggestion.findUniqueOrThrow({ where: { id: result.suggestionId } })).input)).not.toContain("张工下周一");
   });
   it("atomically converts an item and deduplicates parallel submissions, including stale retries", async () => {
-    const { meeting, result } = await pending(); const body = { projectId, actorId: pmId, title: result.actionItems[0].text, assigneeId: memberId, dueDate: "2026-10-26", meetingSource: { meetingId: meeting.id, actionItemId: result.actionItems[0].id, suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true as const } };
+    const { meeting, result } = await pending(); const body = { phase: "项目启动", estimateHours: 4, projectId, actorId: pmId, title: result.actionItems[0].text, assigneeId: memberId, dueDate: "2026-10-26", meetingSource: { meetingId: meeting.id, actionItemId: result.actionItems[0].id, suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true as const } };
     const [first, second] = await Promise.all([createTask(body), createTask(body)]); expect(first.id).toBe(second.id);
-    expect(await db.task.count({ where: { projectId } })).toBe(1); expect(first.dueDate?.toISOString()).toBe("2026-10-26T23:59:59.999Z"); expect(first.assigneeId).toBe(memberId);
+    expect(await db.task.count({ where: { projectId } })).toBe(1); expect(first.dueDate?.toISOString()).toBe("2026-10-26T00:00:00.000Z"); expect(first.assigneeId).toBe(memberId);
     const row = await db.meetingRecord.findUniqueOrThrow({ where: { id: meeting.id } }); expect(row.rowVersion).toBe(2); expect(storedItemsSchema.parse(row.actionItems)[0].taskId).toBe(first.id);
     expect(await db.auditLog.count({ where: { projectId, action: "MEETING_ACTION_ITEM_CONVERTED" } })).toBe(1);
   });
   it("rolls back task, link and all audits if the final audit insert fails", async () => {
     const { meeting, result } = await pending(); state.failAudit = "MEETING_ACTION_ITEM_CONVERTED";
-    await expect(createTask({ projectId, actorId: pmId, title: "合成任务", assigneeId: memberId, meetingSource: { meetingId: meeting.id, actionItemId: result.actionItems[0].id, suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true } })).rejects.toThrow("Synthetic audit outage");
+    await expect(createTask({ phase: "项目启动", estimateHours: 4, dueDate: null, projectId, actorId: pmId, title: "合成任务", assigneeId: memberId, meetingSource: { meetingId: meeting.id, actionItemId: result.actionItems[0].id, suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true } })).rejects.toThrow("Synthetic audit outage");
     expect(await db.task.count({ where: { projectId } })).toBe(0); expect((await db.meetingRecord.findUniqueOrThrow({ where: { id: meeting.id } })).actionItems).toEqual([]); expect(await db.auditLog.count({ where: { projectId, action: "TASK_CREATED" } })).toBe(0);
   });
   it("applies the bundle without losing a converted link, finalizes, then refuses editing and generation", async () => {
-    const { meeting, result } = await pending(); const task = await createTask({ projectId, actorId: pmId, title: "合成任务", meetingSource: { meetingId: meeting.id, actionItemId: result.actionItems[0].id, suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true } });
+    const { meeting, result } = await pending(); const task = await createTask({ phase: "项目启动", estimateHours: 4, dueDate: null, projectId, actorId: pmId, title: "合成任务", meetingSource: { meetingId: meeting.id, actionItemId: result.actionItems[0].id, suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true } });
     const applied = await editMeeting(projectId, meeting.id, { action: "apply", expectedVersion: 2, suggestionId: result.suggestionId }, actor()); expect(storedItemsSchema.parse(applied.actionItems)[0].taskId).toBe(task.id); expect(applied.content).toBe(result.summary);
     await editMeeting(projectId, meeting.id, { action: "finalize", expectedVersion: 3 }, actor());
     await expect(editMeeting(projectId, meeting.id, { action: "save", expectedVersion: 4, title: "篡改", content: "篡改", meetingDate: input().meetingDate }, actor())).rejects.toMatchObject({ status: 409 });
@@ -66,8 +66,8 @@ describe.sequential("meeting AI and task conversion, real MySQL rollback", () =>
   });
   it("rejects stale content, versions, forged item IDs and out-of-project owners", async () => {
     const { meeting, result } = await pending();
-    await expect(createTask({ projectId, actorId: pmId, title: "合成任务", assigneeId: outsiderId, meetingSource: { meetingId: meeting.id, actionItemId: result.actionItems[0].id, suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true } })).rejects.toMatchObject({ status: 400 });
-    await expect(createTask({ projectId, actorId: pmId, title: "合成任务", meetingSource: { meetingId: meeting.id, actionItemId: randomUUID(), suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true } })).rejects.toMatchObject({ status: 400 });
+    await expect(createTask({ phase: "项目启动", estimateHours: 4, dueDate: null, projectId, actorId: pmId, title: "合成任务", assigneeId: outsiderId, meetingSource: { meetingId: meeting.id, actionItemId: result.actionItems[0].id, suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true } })).rejects.toMatchObject({ status: 400 });
+    await expect(createTask({ phase: "项目启动", estimateHours: 4, dueDate: null, projectId, actorId: pmId, title: "合成任务", meetingSource: { meetingId: meeting.id, actionItemId: randomUUID(), suggestionId: result.suggestionId, expectedVersion: 1, visibilityExpansionConfirmed: true } })).rejects.toMatchObject({ status: 400 });
     await editMeeting(projectId, meeting.id, { action: "save", expectedVersion: 1, title: meeting.title, content: "合成会议正文已修改", meetingDate: input().meetingDate }, actor());
     await expect(editMeeting(projectId, meeting.id, { action: "apply", expectedVersion: 1, suggestionId: result.suggestionId }, actor())).rejects.toMatchObject({ status: 409 });
     await expect(editMeeting(projectId, meeting.id, { action: "apply", expectedVersion: 2, suggestionId: result.suggestionId }, actor())).rejects.toMatchObject({ status: 409 });

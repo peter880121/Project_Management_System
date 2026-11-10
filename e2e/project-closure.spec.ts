@@ -1,3 +1,4 @@
+import { businessToday } from "../src/modules/tasks/plan";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
@@ -11,7 +12,7 @@ async function lifecycle(request: APIRequestContext) { const response = await re
 async function transition(request: APIRequestContext, action: string) {
   const p = await lifecycle(request); const response = await request.post(`/api/projects/${projectId}/${action}`, { data: { expectedRowVersion: p.rowVersion, requestKey: randomUUID(), ...(p.currentAcceptanceId ? { acceptanceId: p.currentAcceptanceId } : {}), comment: "合成证据已复核，按当前快照处理。" } }); expect(response.status()).toBe(200); return (await response.json()).data;
 }
-async function complete(request: APIRequestContext) { expect((await request.patch(`/api/tasks/${taskId}`, { data: { status: "DONE", actualHours: 2, signaturePassword: password, signatureReason: "确认验收与移交完成" } })).status()).toBe(200); }
+async function complete(request: APIRequestContext) { expect((await request.patch(`/api/tasks/${taskId}`, { data: { status: "DONE", completedAt: businessToday(), actualHours: 2, signaturePassword: password, signatureReason: "确认验收与移交完成" } })).status()).toBe(200); }
 test.beforeAll(async () => {
   password = process.env.LOCAL_DEV_SEED_PASSWORD || ""; if (!password) throw new Error("Synthetic password required"); const passwordHash = await hashPassword(password);
   await db.$transaction(async tx => {
@@ -36,7 +37,7 @@ test("PM -> QA -> ADMIN closes a signed project, freezes assets, notifies member
     await login(qa.request, qaEmail); await login(admin.request, adminEmail);
     await page.goto(`/projects/${projectId}/acceptance`); await page.getByRole("button", { name: "提交验收", exact: true }).click();
     await expect(page.getByRole("alert").filter({ hasText: "不能提交验收" }).first()).toBeVisible();
-    await page.screenshot({ path: `${evidence}/01-incomplete-acceptance-blocked.png`, fullPage: true });
+    if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/01-incomplete-acceptance-blocked.png`, fullPage: true });
     const task = await db.task.findUniqueOrThrow({ where: { id: taskId } });
     expect((await page.request.patch(`/api/tasks/${taskId}`, { data: { requiresDeliverable: true, expectedUpdatedAt: task.updatedAt.toISOString() } })).status()).toBe(200);
     const uploaded = await page.request.post(`/api/projects/${projectId}/documents`, { multipart: { file: { name: "synthetic-closure-report.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\nSynthetic closure evidence\n%%EOF") }, uploadKey: randomUUID(), syntheticOnly: "true" } }); expect(uploaded.status()).toBe(201);
@@ -87,15 +88,10 @@ test("QA sees a hash mismatch, rejects the batch, and PM gets an auditable corre
     expect(await db.auditLog.count({ where: { projectId, action: "PROJECT_ACCEPTANCE_REJECTED" } })).toBe(1);
   } finally { await qa.close(); }
 });
-async function drag(page: Page) {
-  const bar = page.locator(`.bar-wrapper[data-id="${taskId}"] .bar`).first();
-  await expect.poll(() => page.locator(".gantt-container").evaluate(e => e.style.getPropertyValue("--gv-column-width"))).toBe("45px");
-  await bar.scrollIntoViewIfNeeded(); await bar.click({ trial: true }); const box = (await bar.boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 45, box.y + box.height / 2, { steps: 8 }); await page.mouse.up();
-}
-for (const reason of ["role", "archive"]) test(`Gantt 403 after ${reason} change discards the drag and switches the workspace to read-only`, async ({ page, browser }) => {
+for (const reason of ["role", "archive"]) test(`task plan 403 after ${reason} change clears the draft and switches the workspace to read-only`, async ({ page, browser }) => {
   test.setTimeout(90000); const before = await db.task.findUniqueOrThrow({ where: { id: taskId } }); let forbidden = 0; const contexts: BrowserContext[] = [];
-  await page.goto(`/projects/${projectId}/planning`); await expect(page.locator(`.bar-wrapper[data-id="${taskId}"]`)).toBeVisible(); await page.getByLabel("甘特图时间粒度").selectOption("Day");
+  await page.goto(`/projects/${projectId}/board?taskId=${taskId}`);
+  const drawer = page.getByRole("dialog", { name: "任务详情", exact: true }); await drawer.getByText("编辑计划安排", { exact: true }).click(); await drawer.getByLabel("计划预计工时", { exact: true }).fill("7");
   await page.route(`**/api/tasks/${taskId}/schedule`, async route => {
     if (reason === "role") await db.$transaction(tx => tx.user.update({ where: { id: pmId }, data: { role: "QA" } }));
     else {
@@ -105,11 +101,18 @@ for (const reason of ["role", "archive"]) test(`Gantt 403 after ${reason} change
     const response = await route.fetch(); forbidden = response.status(); await route.fulfill({ response });
   });
   try {
-    await drag(page); await expect.poll(() => forbidden).toBe(403);
+    await drawer.getByRole("button", { name: "保存任务计划", exact: true }).click(); await expect.poll(() => forbidden).toBe(403);
     await expect(page.getByRole("alert").filter({ hasText: "该项目已被归档/权限已变更，页面已刷新" }).first()).toBeVisible();
-    await expect(page.getByText("当前角色为只读，可点击任务查看详情。", { exact: false })).toBeVisible();
+    if (reason === "archive") await expect(page.locator("[data-project-readonly=true]")).toBeVisible();
+    else {
+      // QA retains review permissions: assert execution editing is revoked,
+      // rather than incorrectly treating the entire ACTIVE project as frozen.
+      await expect(page.getByRole("link", { name: "创建任务", exact: true })).toHaveCount(0);
+      const current = await page.request.get(`/api/projects/${projectId}/lifecycle`);
+      expect((await current.json()).data.capabilities.canEditTasks).toBe(false);
+    }
     const after = await db.task.findUniqueOrThrow({ where: { id: taskId } }); expect(after.plannedStartDate).toEqual(before.plannedStartDate); expect(after.dueDate).toEqual(before.dueDate); expect(after.scheduleVersion).toBe(before.scheduleVersion);
-    await page.getByRole("button", { name: "表格视图", exact: true }).click(); await expect(page.getByLabel("开始日期 合成交付验收", { exact: true })).toBeDisabled();
-    await page.screenshot({ path: `${evidence}/07-${reason}-403-readonly.png`, fullPage: true });
+    await expect(page.getByRole("button", { name: "保存任务计划", exact: true })).toHaveCount(0);
+    if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/07-${reason}-403-readonly.png`, fullPage: true });
   } finally { await page.unroute(`**/api/tasks/${taskId}/schedule`); for (const context of contexts) await context.close(); }
 });

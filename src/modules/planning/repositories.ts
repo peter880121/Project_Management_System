@@ -20,11 +20,11 @@ export const saveCapacity = (tx: Prisma.TransactionClient, userId: string, weekS
 export async function loadPlanningSnapshot(tx: Prisma.TransactionClient, projectId: string, weekStart: Date) {
   const project = await tx.project.findUnique({ where: { id: projectId }, select: { id: true, ownerId: true } }); if (!project) throw new PlanningError("项目不存在", 404);
   const tasks = await tx.task.findMany({ where: { projectId }, include: { dependencies: true, assignee: { select: { id: true, name: true } } }, orderBy: { id: "asc" }, take: 5001 });
-  const members = await tx.user.findMany({ where: { isSystem: false, OR: [{ projectMemberships: { some: { projectId, active: true } } }, { ownedProjects: { some: { id: projectId } } }, { tasks: { some: { projectId, status: { not: "DONE" } } } }] }, select: { id: true, name: true, status: true }, take: 1001, orderBy: { id: "asc" } });
+  const members = await tx.user.findMany({ where: { isSystem: false, OR: [{ projectMemberships: { some: { projectId, active: true } } }, { ownedProjects: { some: { id: projectId } } }, { tasks: { some: { projectId, status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } } } }] }, select: { id: true, name: true, status: true }, take: 1001, orderBy: { id: "asc" } });
   if (tasks.length > 5000 || members.length > 1000) throw new PlanningError("数据超过排期视图范围，请缩小项目或成员范围", 422);
   const capacities = await tx.memberWeeklyCapacity.findMany({ where: { userId: { in: members.map((member) => member.id) }, weekStart } });
   // Include all projects for these members; do not report a partial global load as complete.
-  const loadTasks = await tx.task.findMany({ where: { assigneeId: { in: members.map((member) => member.id) }, status: { not: "DONE" } }, select: { id: true, title: true, projectId: true, assigneeId: true, status: true, plannedStartDate: true, dueDate: true, estimateHours: true }, orderBy: { id: "asc" }, take: 20001 });
+  const loadTasks = await tx.task.findMany({ where: { assigneeId: { in: members.map((member) => member.id) }, status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] }, project: { status: { in: ["PLANNING", "ACTIVE"] } } }, select: { id: true, title: true, projectId: true, assigneeId: true, status: true, plannedStartDate: true, dueDate: true, estimateHours: true }, orderBy: { id: "asc" }, take: 20001 });
   if (loadTasks.length > 20000) throw new PlanningError("跨项目任务超过容量统计范围，不能可靠判断负载", 422);
   return { project, tasks, members, capacities, loadTasks };
 }

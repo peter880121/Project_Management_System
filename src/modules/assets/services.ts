@@ -1,9 +1,11 @@
+import { assertTaskWritable } from "@/modules/tasks/lifecycle";
 import { randomUUID, createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { lockBusinessActor, assertProjectAccessTx } from "@/modules/auth/project-access";
 import { recordAudit, type AuditRequestMetadata } from "@/modules/audit/service";
-import { mineruModel } from "@/modules/documents/mineru";
+import { documentParser } from "@/modules/documents/local-parser";
+import { DOCUMENT_MIME_TYPES } from "@/modules/documents/formats";
 import { AssetError, canReadRoles, type deliverableCreateSchema, type meetingSchema } from "./validation";
 import type { z } from "zod";
 type Actor = { actorId: string } & AuditRequestMetadata;
@@ -22,7 +24,7 @@ export async function assetIndexStatus(documentId: string | null) {
   return doc.parseStatus === "NOT_REQUESTED" && !doc.assetJob ? "NOT_SYNCED" : "SYNCING";
 }
 export async function listDeliverables(projectId: string, taskId?: string, page = 1) {
-  const rows = await prisma.deliverable.findMany({ where: { projectId, ...(taskId ? { taskId } : {}) }, include: { document: { select: evidenceSelect }, createdBy: { select: { name: true } }, reviewedBy: { select: { name: true } } }, orderBy: [{ createdAt: "desc" }, { id: "asc" }], take: 30, skip: (page - 1) * 30 });
+  const rows = await prisma.deliverable.findMany({ where: { projectId, ...(taskId ? { taskId } : {}) }, include: { task: { select: { status: true } }, document: { select: evidenceSelect }, createdBy: { select: { name: true } }, reviewedBy: { select: { name: true } } }, orderBy: [{ createdAt: "desc" }, { id: "asc" }], take: 30, skip: (page - 1) * 30 });
   return Promise.all(rows.map(async row => ({ ...row, indexStatus: await assetIndexStatus(row.documentId), downloadUrl: `/api/documents/${row.documentId}/download` })));
 }
 export async function createDeliverable(projectId: string, input: z.infer<typeof deliverableCreateSchema>, actor: Actor, previousId?: string) {
@@ -35,10 +37,12 @@ export async function createDeliverable(projectId: string, input: z.infer<typeof
       if (priorDoc.projectId === projectId && priorDoc.name === input.name && priorDoc.taskId === (input.taskId ?? null) && (previous ? priorDoc.seriesId === previous.seriesId && priorDoc.version > previous.version : priorDoc.version === 1)) return priorDoc;
       throw new AssetError("该文件已绑定交付版本，请上传独立新文件", 409);
     }
-    const doc = await tx.document.findFirst({ where: { id: input.documentId, projectId, storageStatus: "AVAILABLE", mediaType: "application/pdf" } });
-    if (!doc?.sha256 || !doc.fileSize) throw new AssetError("请先完成同项目 PDF 文件上传", 400);
+    const doc = await tx.document.findFirst({ where: { id: input.documentId, projectId, storageStatus: "AVAILABLE", mediaType: { in: DOCUMENT_MIME_TYPES } } });
+    if (!doc?.sha256 || !doc.fileSize) throw new AssetError("请先完成同项目 PDF、DOCX、TXT、TEXT 或 MD 文件上传", 400);
+    if (doc.documentType === "MEETING" || doc.meetingAttachmentId) throw new AssetError("会议资料不能改绑为交付物，以免改变会议可见范围", 400);
+    if (["QUEUED", "RUNNING"].includes(doc.parseStatus)) throw new AssetError("文件正在解析，请等待完成后绑定交付物", 409);
     if (await tx.documentChunk.count({ where: { documentId: doc.id, leaseUntil: { gt: new Date() } } })) throw new AssetError("文件正在索引，请稍后绑定交付物", 409);
-    if (input.taskId && !await tx.task.findFirst({ where: { id: input.taskId, projectId } })) throw new AssetError("任务不属于当前项目", 400);
+    if (input.taskId) { const task = await tx.task.findFirst({ where: { id: input.taskId, projectId } }); if (!task) throw new AssetError("任务不属于当前项目", 400); assertTaskWritable(task); }
     if (previous && previous.taskId !== (input.taskId ?? null)) throw new AssetError("版本不可改变任务关联", 400);
     const latest = previous ? await tx.deliverable.findFirst({ where: { projectId, seriesId: previous.seriesId }, orderBy: { version: "desc" } }) : null;
     const id = randomUUID();
@@ -55,22 +59,26 @@ export async function queueAssetParse(tx: Prisma.TransactionClient, documentId: 
   }
   if (["RUNNING", "QUEUED"].includes(doc.parseStatus)) return;
   const version = doc.parseVersion + 1;
-  const job = await tx.documentParseJob.create({ data: { documentId, version, requestedById: actor.actorId, requestKey: randomUUID(), modelVersion: mineruModel(), sourceSha256: doc.sha256!, sourceFilename: doc.filename, sourceSize: doc.fileSize!, deadlineAt: new Date(Date.now() + 30 * 60000), ip: actor.ip, userAgent: actor.userAgent } });
+  const parser = documentParser(doc.filename);
+  const job = await tx.documentParseJob.create({ data: { documentId, version, requestedById: actor.actorId, requestKey: randomUUID(), modelVersion: parser.modelVersion, provider: parser.provider, phase: parser.phase, sourceSha256: doc.sha256!, sourceFilename: doc.filename, sourceSize: doc.fileSize!, deadlineAt: new Date(Date.now() + 30 * 60000), ip: actor.ip, userAgent: actor.userAgent } });
   await tx.document.update({ where: { id: documentId }, data: { parseVersion: version, parseStatus: "QUEUED" } });
-  await recordAudit(tx, { ...actor, projectId, action: "DOCUMENT_PARSE_REQUESTED", entityType: "DocumentParseJob", entityId: job.id, after: { documentId, version, cloudProcessingConfirmed: true, source: "APPROVED_DELIVERABLE" } });
+  await recordAudit(tx, { ...actor, projectId, action: "DOCUMENT_PARSE_REQUESTED", entityType: "DocumentParseJob", entityId: job.id, after: { documentId, version, provider: parser.provider, modelVersion: parser.modelVersion, cloudProcessingConfirmed: parser.cloud, source: "APPROVED_DELIVERABLE" } });
 }
-export async function mutateDeliverable(id: string, action: "edit" | "submit" | "review", input: { rowVersion: number; name?: string; decision?: "APPROVED" | "REJECTED"; reviewComment?: string }, actor: Actor) {
+export async function mutateDeliverable(id: string, action: "edit" | "submit" | "review", input: { rowVersion: number; name?: string; decision?: "APPROVED" | "REJECTED"; reviewComment?: string; cloudProcessingConfirmed?: boolean }, actor: Actor) {
   const scope = await prisma.deliverable.findUnique({ where: { id }, select: { projectId: true } }); if (!scope) throw new AssetError("交付物不存在", 404);
   return prisma.$transaction(async tx => {
     await lockAssetActor(tx, scope.projectId, actor, action === "review" ? ["QA", "ADMIN"] : ["PM"]);
     const row = await tx.deliverable.findUniqueOrThrow({ where: { id }, include: { document: true } });
     if (action === "review" && (row.createdById === actor.actorId || row.submittedById === actor.actorId)) throw new AssetError("不能审批自己提交的交付物", 403);
+    if (row.taskId) { const task = await tx.task.findUniqueOrThrow({ where: { id: row.taskId } }); assertTaskWritable(task); }
     if (row.rowVersion !== input.rowVersion || row.status !== (action === "review" ? "PENDING_REVIEW" : "DRAFT")) throw new AssetError("交付版本已变化或已冻结，请刷新", 409);
     if (row.document.storageStatus !== "AVAILABLE") throw new AssetError("文件尚未上传成功", 400);
+    const cloud = documentParser(row.document.filename).cloud;
+    if (action === "submit" && cloud && input.cloudProcessingConfirmed !== true) throw new AssetError("请确认批准后将合成 PDF 发送至 MinerU 云端解析", 400);
     const status = action === "submit" ? "PENDING_REVIEW" : action === "review" ? input.decision! : "DRAFT";
     const updated = await tx.deliverable.update({ where: { id }, data: { status, rowVersion: { increment: 1 }, ...(action === "edit" ? { name: input.name } : {}), ...(action === "submit" ? { submittedAt: new Date(), submittedById: actor.actorId } : {}), ...(action === "review" ? { reviewedById: actor.actorId, reviewedAt: new Date(), reviewComment: input.reviewComment } : {}) } });
     if (status === "APPROVED") await queueAssetParse(tx, row.documentId, actor, row.projectId);
-    await recordAudit(tx, { ...actor, projectId: row.projectId, action: action === "edit" ? "DELIVERABLE_UPDATED" : action === "submit" ? "DELIVERABLE_SUBMITTED" : "DELIVERABLE_REVIEWED", entityType: "Deliverable", entityId: id, before: { status: row.status, name: row.name, rowVersion: row.rowVersion }, after: { status, name: updated.name, rowVersion: updated.rowVersion, version: row.version, documentId: row.documentId, sha256: row.document.sha256, reviewComment: updated.reviewComment, reviewerId: updated.reviewedById, cloudProcessingConfirmed: action === "submit" || status === "APPROVED" } });
+    await recordAudit(tx, { ...actor, projectId: row.projectId, action: action === "edit" ? "DELIVERABLE_UPDATED" : action === "submit" ? "DELIVERABLE_SUBMITTED" : "DELIVERABLE_REVIEWED", entityType: "Deliverable", entityId: id, before: { status: row.status, name: row.name, rowVersion: row.rowVersion }, after: { status, name: updated.name, rowVersion: updated.rowVersion, version: row.version, documentId: row.documentId, sha256: row.document.sha256, reviewComment: updated.reviewComment, reviewerId: updated.reviewedById, cloudProcessingConfirmed: cloud && (action === "submit" || status === "APPROVED") } });
     return updated;
   });
 }

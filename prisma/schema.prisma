@@ -7,6 +7,96 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// User reporting records never grant permission to mutate project business assets.
+model WeeklyReportPeriod {
+  weekStart DateTime @id @db.DateTime(3)
+  deadline DateTime @db.DateTime(3)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+}
+
+model WeeklyReportExpectation {
+  id String @id @default(uuid()) @db.Char(36)
+  authorId String @db.Char(36)
+  weekStart DateTime @db.DateTime(3)
+  role Role
+  deadline DateTime @db.DateTime(3)
+  exemptReason String? @db.VarChar(500)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  @@unique([authorId, weekStart])
+  @@index([weekStart, deadline])
+}
+
+model WeeklyReport {
+  id String @id @default(uuid()) @db.Char(36)
+  authorId String @db.Char(36)
+  weekStart DateTime @db.DateTime(3)
+  state String @default("DRAFT") @db.VarChar(20)
+  rowVersion Int @default(1)
+  submittedAt DateTime? @db.DateTime(3)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  sections WeeklyReportSection[]
+  revisions WeeklyReportRevision[]
+  @@unique([authorId, weekStart])
+  @@index([weekStart, state])
+}
+
+model WeeklyReportSection {
+  id String @id @default(uuid()) @db.Char(36)
+  reportId String @db.Char(36)
+  projectId String? @db.Char(36)
+  projectName String @db.VarChar(191)
+  summary String @db.Text
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  report WeeklyReport @relation(fields: [reportId], references: [id], onDelete: Restrict)
+  items WeeklyReportItem[]
+  @@index([reportId])
+  @@index([projectId, reportId])
+}
+
+model WeeklyReportItem {
+  id String @id @default(uuid()) @db.Char(36)
+  sectionId String @db.Char(36)
+  kind String @db.VarChar(20)
+  position Int @default(0)
+  text String @db.Text
+  sourceType String? @db.VarChar(20)
+  sourceId String? @db.Char(36)
+  targetDate DateTime? @db.DateTime(3)
+  declaredHours Decimal? @db.Decimal(6, 2)
+  section WeeklyReportSection @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  @@index([sectionId])
+}
+
+model WeeklyReportRevision {
+  id String @id @default(uuid()) @db.Char(36)
+  reportId String @db.Char(36)
+  version Int
+  snapshot Json
+  sha256 String @db.Char(64)
+  submittedAt DateTime @default(now()) @db.DateTime(3)
+  report WeeklyReport @relation(fields: [reportId], references: [id], onDelete: Restrict)
+  reviews WeeklyReportReview[]
+  @@unique([reportId, version])
+}
+
+model WeeklyReportReview {
+  id String @id @default(uuid()) @db.Char(36)
+  revisionId String @db.Char(36)
+  sectionId String @db.Char(36)
+  sectionSha256 String @db.Char(64)
+  actorId String @db.Char(36)
+  decision String @db.VarChar(20)
+  reason String @db.VarChar(1000)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  revision WeeklyReportRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  @@unique([revisionId, sectionId, actorId])
+  @@index([sectionId, sectionSha256])
+}
+
 enum Role {
   ADMIN
   PM
@@ -28,6 +118,7 @@ enum ProjectStatus {
   COMPLETED
   PENDING_ACCEPTANCE
   ARCHIVED
+  CANCELLED
 }
 
 enum TaskStatus {
@@ -35,6 +126,7 @@ enum TaskStatus {
   IN_PROGRESS
   BLOCKED
   DONE
+  CANCELLED
 }
 
 enum RequirementStatus {
@@ -69,6 +161,7 @@ enum AiSuggestionType {
   RISK
   AUDIT_SUMMARY
   MEETING_SUMMARY
+  ACCEPTANCE_DIAGNOSIS
 }
 
 enum MeetingStatus {
@@ -77,6 +170,11 @@ enum MeetingStatus {
 }
 
 model User {
+  assignedAuditIssues AuditIssue[] @relation("AuditIssueAssignee")
+  auditIssueEvents AuditIssueEvent[]
+  weeklyReports WeeklyReport[]
+  weeklyExpectations WeeklyReportExpectation[]
+  weeklyReviews WeeklyReportReview[]
   id                      String                    @id @default(uuid()) @db.Char(36)
   email                   String                    @unique @db.VarChar(191)
   name                    String                    @db.VarChar(191)
@@ -89,6 +187,9 @@ model User {
   lockedUntil             DateTime?                 @db.DateTime(3)
   createdAt               DateTime                  @default(now()) @db.DateTime(3)
   updatedAt               DateTime                  @updatedAt @db.DateTime(3)
+  complianceChecks ProjectComplianceCheck[]
+  cancelledTasks Task[] @relation("TaskCanceller")
+  projectStatusChanges    ProjectStatusChange[]
   ownedProjects           Project[]                 @relation("ProjectOwner")
   uploadedDocuments       Document[]                @relation("DocumentUploader")
   createdDeliverables     Deliverable[]             @relation("DeliverableCreator")
@@ -106,6 +207,7 @@ model User {
   reviewedSuggestions     AiSuggestion[]            @relation("SuggestionReviewer")
   auditLogs               AuditLog[]
   sessions                Session[]
+  ragConversations        RagConversation[]
   passwordResetTokens     PasswordResetToken[]
   requirementTaskReviews  Task[]                    @relation("TaskRequirementReviewer")
   requirementTestReviews  TestCase[]                @relation("TestRequirementReviewer")
@@ -116,6 +218,68 @@ model User {
   projectNotifications    ProjectNotification[]
 
   @@index([isSystem])
+}
+
+model RagConversation {
+  id String @id @default(uuid()) @db.Char(36)
+  userId String @db.Char(36)
+  title String @db.VarChar(191)
+  projectId String? @db.Char(36)
+  rowVersion Int @default(1) @db.UnsignedInt
+  activeRequestId String? @db.Char(36)
+  leaseUntil DateTime? @db.DateTime(3)
+  hiddenAt DateTime? @db.DateTime(3)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  messages RagMessage[]
+  @@index([userId, hiddenAt, updatedAt])
+}
+
+model RagMessage {
+  id String @id @default(uuid()) @db.Char(36)
+  conversationId String @db.Char(36)
+  requestKey String @db.Char(36)
+  sequence Int @db.UnsignedInt
+  role String @db.VarChar(16)
+  actorRole Role
+  content String @db.Text
+  status String @db.VarChar(16)
+  scopeProjectIds Json
+  model String? @db.VarChar(191)
+  retrievalMode String? @db.VarChar(32)
+  mode String @default("INTERNAL") @db.VarChar(16)
+  intent String? @db.VarChar(32)
+  webQuery String? @db.VarChar(2000)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  conversation RagConversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  citations RagCitation[]
+  @@unique([conversationId, requestKey, role])
+  @@unique([conversationId, sequence])
+  @@index([conversationId, createdAt])
+}
+
+model RagCitation {
+  id String @id @default(uuid()) @db.Char(36)
+  messageId String @db.Char(36)
+  ordinal Int @db.UnsignedInt
+  sourceType String @db.VarChar(16)
+  projectId String? @db.Char(36)
+  documentId String? @db.Char(36)
+  chunkId String? @db.Char(36)
+  contactId String? @db.Char(36)
+  version Int? @db.UnsignedInt
+  page Int? @db.UnsignedInt
+  title String @db.VarChar(255)
+  snippet String @db.Text
+  contentSha256 String @db.Char(64)
+  webUrl String? @db.VarChar(2048)
+  retrievedAt DateTime? @db.DateTime(3)
+  publishedAt DateTime? @db.DateTime(3)
+  message RagMessage @relation(fields: [messageId], references: [id], onDelete: Restrict)
+  @@unique([messageId, ordinal])
+  @@index([projectId, documentId])
 }
 
 model Session {
@@ -146,11 +310,18 @@ model PasswordResetToken {
 }
 
 model Project {
+  auditIssues AuditIssue[]
+  decisionSnapshots DecisionSnapshot[]
+  weeklyReportSections WeeklyReportSection[]
   id              String             @id @default(uuid()) @db.Char(36)
   name            String             @db.VarChar(191)
   description     String?            @db.Text
   status          ProjectStatus      @default(PLANNING)
   rowVersion      Int                @default(1) @db.UnsignedInt
+  pausedFromStatus String? @db.VarChar(32)
+  currentStatusChangeId String? @unique @db.Char(36)
+  currentStatusChange ProjectStatusChange? @relation("CurrentProjectStatusChange", fields: [currentStatusChangeId], references: [id], onDelete: Restrict)
+  statusChanges ProjectStatusChange[] @relation("ProjectStatusChanges")
   currentAcceptanceId String?        @unique @db.Char(36)
   currentAcceptance ProjectAcceptance? @relation("CurrentAcceptance", fields: [currentAcceptanceId], references: [id], onDelete: Restrict)
   acceptances     ProjectAcceptance[] @relation("ProjectAcceptances")
@@ -164,6 +335,14 @@ model Project {
   owner           User?              @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   tasks           Task[]
   requirements    Requirement[]
+  requirementIntakes RequirementIntake[]
+  requirementRevisions RequirementRevision[]
+  requirementChanges RequirementChangeRequest[]
+  requirementLinks RequirementTaskLink[]
+  requirementDecisions RequirementDecision[]
+  testExecutions TestExecution[]
+  requirementBaselines RequirementBaseline[]
+  requirementAttachments RequirementAttachment[]
   documents       Document[]
   deliverables    Deliverable[]
   meetingRecords  MeetingRecord[]
@@ -174,10 +353,29 @@ model Project {
   riskSchedule    RiskScanSchedule?
   riskScanJobs    RiskScanJob[]
   members         ProjectMember[]
+  complianceChecks ProjectComplianceCheck[]
   complianceExports ComplianceExport[]
 
   @@index([ownerId, status])
   @@index([status, archivedAt])
+}
+
+model ProjectStatusChange {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  action String @db.VarChar(32)
+  fromStatus String @db.VarChar(32)
+  toStatus String @db.VarChar(32)
+  reason String @db.VarChar(1000)
+  actorId String @db.Char(36)
+  requestKey String @db.Char(36)
+  expectedRowVersion Int @db.UnsignedInt
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  project Project @relation("ProjectStatusChanges", fields: [projectId], references: [id], onDelete: Restrict)
+  currentFor Project? @relation("CurrentProjectStatusChange")
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  @@unique([projectId, requestKey])
+  @@index([projectId, createdAt])
 }
 
 model ProjectAcceptance {
@@ -190,6 +388,9 @@ model ProjectAcceptance {
   submittedAt    DateTime @default(now()) @db.DateTime(3)
   snapshot       Json
   snapshotSha256 String @db.Char(64)
+  overrideReason String? @db.Text
+  overrideGapCount Int @default(0) @db.UnsignedInt
+  overrideCheckId String? @db.Char(36)
   qaApprovedById String? @db.Char(36)
   qaApprovedAt   DateTime? @db.DateTime(3)
   reviewComment  String? @db.Text
@@ -222,6 +423,7 @@ model ProjectMember {
   id        String   @id @default(uuid()) @db.Char(36)
   projectId String   @db.Char(36)
   userId    String   @db.Char(36)
+  canOverrideAcceptance Boolean @default(false)
   active    Boolean  @default(true)
   version   Int      @default(1) @db.UnsignedInt
   createdAt DateTime @default(now()) @db.DateTime(3)
@@ -270,6 +472,14 @@ model Task {
   estimateHours              Decimal?         @db.Decimal(8, 2)
   actualHours                Decimal?         @db.Decimal(8, 2)
   completedAt                DateTime?        @db.DateTime(3)
+  rowVersion                 Int @default(1) @db.UnsignedInt
+  signatureEvidenceVersion   Int @default(1) @db.UnsignedTinyInt
+  cancelReason               String? @db.VarChar(1000)
+  cancelledAt                DateTime? @db.DateTime(3)
+  cancelledById              String? @db.Char(36)
+  cancelledBy User? @relation("TaskCanceller", fields: [cancelledById], references: [id], onDelete: Restrict)
+  completionRoundId          String?          @db.Char(36)
+  planningStatus             String           @default(dbgenerated()) @db.VarChar(16)
   dueDate                    DateTime?        @db.DateTime(3)
   plannedStartDate           DateTime?        @db.DateTime(3)
   scheduleVersion            Int              @default(0) @db.UnsignedInt
@@ -284,6 +494,7 @@ model Task {
   requirementReviewedAt      DateTime?        @db.DateTime(3)
   requirementReviewer        User?            @relation("TaskRequirementReviewer", fields: [requirementReviewedById], references: [id], onDelete: Restrict)
   dependencies               TaskDependency[] @relation("TaskDependencies")
+  requirementLinks RequirementTaskLink[]
   blockedBy                  TaskDependency[] @relation("TaskPrerequisites")
 
   @@index([projectId, status])
@@ -330,9 +541,185 @@ model Requirement {
   project   Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
   tasks     Task[]
   testCases TestCase[]
+  number String? @db.VarChar(32)
+  managed Boolean @default(false)
+  workflowState String @default("DRAFT") @db.VarChar(32)
+  rowVersion Int @default(1) @db.UnsignedInt
+  draftVersion Int? @db.UnsignedInt
+  approvedVersion Int? @db.UnsignedInt
+  createdById String? @db.Char(36)
+  ownerId String? @db.Char(36)
+  dueDate DateTime? @db.DateTime(3)
+  completedAt DateTime? @db.DateTime(3)
+  priority String @default("SHOULD") @db.VarChar(16)
+  category String @default("FUNCTIONAL") @db.VarChar(24)
+  riskLevel String @default("NORMAL") @db.VarChar(16)
+  discoveryPhase String? @db.VarChar(50)
+  targetRelease String? @db.VarChar(100)
+  revisions RequirementRevision[]
+  taskLinks RequirementTaskLink[]
+  intakes RequirementIntake[]
+  changes RequirementChangeRequest[]
+  executions TestExecution[]
+  decisions RequirementDecision[]
+  attachments RequirementAttachment[]
 
   @@unique([projectId, title, version])
+  @@unique([projectId, number])
+  @@index([projectId, workflowState, dueDate])
   @@index([projectId, status])
+}
+
+// Project-scoped records use the existing project freeze procedure. Approved
+// content, executions and decisions are immutable evidence, never overwritten.
+model RequirementIntake {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  title String @db.VarChar(191)
+  content String @db.Text
+  source String @db.VarChar(24)
+  sourceReference String? @db.VarChar(191)
+  requester String @db.VarChar(191)
+  state String @default("SUBMITTED") @db.VarChar(24)
+  reason String? @db.Text
+  requirementId String? @db.Char(36)
+  createdById String @db.Char(36)
+  rowVersion Int @default(1) @db.UnsignedInt
+  requestKey String @db.Char(36)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  requirement Requirement? @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  attachments RequirementAttachment[]
+  @@unique([projectId, requestKey])
+  @@index([projectId, state, createdAt])
+}
+
+model RequirementRevision {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  requirementId String @db.Char(36)
+  version Int @db.UnsignedInt
+  title String @db.VarChar(191)
+  content String @db.Text
+  acceptanceCriteria String @db.Text
+  dueDate DateTime @db.DateTime(3)
+  metadata Json
+  sha256 String @db.Char(64)
+  createdById String @db.Char(36)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  attachments RequirementAttachment[]
+  executions TestExecution[]
+  @@unique([requirementId, version])
+  @@index([projectId, createdAt])
+}
+
+model RequirementChangeRequest {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  requirementId String @db.Char(36)
+  fromVersion Int @db.UnsignedInt
+  previousState String @db.VarChar(32)
+  reason String @db.Text
+  impact Json
+  state String @default("DRAFT") @db.VarChar(24)
+  createdById String @db.Char(36)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  @@index([projectId, requirementId, state])
+}
+
+model RequirementTaskLink {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  requirementId String @db.Char(36)
+  taskId String @db.Char(36)
+  createdById String @db.Char(36)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  task Task @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  @@unique([requirementId, taskId])
+  @@index([projectId, taskId])
+}
+
+model RequirementDecision {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  requirementId String @db.Char(36)
+  revisionNumber Int @db.UnsignedInt
+  action String @db.VarChar(32)
+  actorId String @db.Char(36)
+  comment String @db.Text
+  evidence Json
+  requestKey String @db.Char(36)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  @@unique([projectId, requestKey])
+  @@index([requirementId, createdAt])
+}
+
+model TestExecution {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  requirementId String @db.Char(36)
+  revisionId String @db.Char(36)
+  testCaseId String @db.Char(36)
+  testCaseSha256 String @db.Char(64)
+  result String @db.VarChar(16)
+  comment String @db.Text
+  documentId String @db.Char(36)
+  documentSha256 String @db.Char(64)
+  actorId String @db.Char(36)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  revision RequirementRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Restrict)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  @@index([projectId, requirementId, revisionId])
+  @@index([testCaseId, createdAt])
+}
+
+model RequirementBaseline {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  name String @db.VarChar(191)
+  ordinal Int @db.UnsignedInt
+  entries Json
+  sha256 String @db.Char(64)
+  createdById String @db.Char(36)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  @@unique([projectId, name])
+  @@unique([projectId, ordinal])
+  @@index([projectId, createdAt])
+}
+
+model RequirementAttachment {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  requirementId String? @db.Char(36)
+  revisionId String? @db.Char(36)
+  intakeId String? @db.Char(36)
+  filename String @db.VarChar(191)
+  mediaType String @db.VarChar(100)
+  minioKey String @unique @db.VarChar(512)
+  sha256 String @db.Char(64)
+  fileSize Int @db.UnsignedInt
+  createdById String @db.Char(36)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  requirement Requirement? @relation(fields: [requirementId], references: [id], onDelete: Restrict)
+  revision RequirementRevision? @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  intake RequirementIntake? @relation(fields: [intakeId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  @@index([projectId, requirementId, revisionId])
+  @@index([intakeId])
 }
 
 model TestCase {
@@ -347,6 +734,7 @@ model TestCase {
   requirementReviewedById    String?        @db.Char(36)
   requirementReviewedAt      DateTime?      @db.DateTime(3)
   requirementReviewer        User?          @relation("TestRequirementReviewer", fields: [requirementReviewedById], references: [id], onDelete: Restrict)
+  executions TestExecution[]
 
   @@index([requirementId, status])
 }
@@ -368,6 +756,7 @@ model AIRecommendation {
 }
 
 model AiSuggestion {
+  auditOccurrences AuditIssueOccurrence[]
   id             String                    @id @default(uuid()) @db.Char(36)
   projectId      String                    @db.Char(36)
   type           AiSuggestionType
@@ -467,7 +856,58 @@ enum ComplianceFindingDecision {
   DISMISSED
 }
 
+model AuditIssue {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  fingerprint String @db.VarChar(191)
+  code String @db.VarChar(100)
+  title String @db.VarChar(500)
+  status String @default("PENDING") @db.VarChar(24)
+  severity String @default("MEDIUM") @db.VarChar(12)
+  assignedToId String? @db.Char(36)
+  dueDate DateTime? @db.DateTime(3)
+  rowVersion Int @default(1) @db.UnsignedInt
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  updatedAt DateTime @updatedAt @db.DateTime(3)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assignedTo User? @relation("AuditIssueAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  occurrences AuditIssueOccurrence[]
+  events AuditIssueEvent[]
+  @@unique([projectId, fingerprint])
+  @@index([projectId, status, createdAt])
+  @@index([assignedToId, status])
+}
+
+model AuditIssueOccurrence {
+  id String @id @default(uuid()) @db.Char(36)
+  issueId String @db.Char(36)
+  summaryId String @db.Char(36)
+  findingKey String @db.VarChar(191)
+  evidence Json
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  issue AuditIssue @relation(fields: [issueId], references: [id], onDelete: Restrict)
+  summary AiSuggestion @relation(fields: [summaryId], references: [id], onDelete: Restrict)
+  @@unique([summaryId, findingKey])
+  @@index([issueId, createdAt])
+}
+
+model AuditIssueEvent {
+  id String @id @default(uuid()) @db.Char(36)
+  issueId String @db.Char(36)
+  actorId String @db.Char(36)
+  action String @db.VarChar(24)
+  fromStatus String @db.VarChar(24)
+  toStatus String @db.VarChar(24)
+  note String @db.VarChar(2000)
+  evidence Json
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  issue AuditIssue @relation(fields: [issueId], references: [id], onDelete: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  @@index([issueId, createdAt])
+}
+
 model AuditLog {
+  actorRole Role?
   id         String   @id @default(uuid()) @db.Char(36)
   actorId    String   @db.Char(36)
   projectId  String?  @db.Char(36)
@@ -482,18 +922,38 @@ model AuditLog {
   actor      User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
   project    Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
+  @@index([projectId, entityType, action, entityId])
   @@index([entityType, entityId, createdAt])
   @@index([actorId, createdAt])
   @@index([projectId, createdAt])
   @@index([action, createdAt])
 }
 
+// Prospective, append-only observations; never backfill historical stock from today.
+model DecisionSnapshot {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  day DateTime @db.DateTime(3)
+  recordedAt DateTime @default(now()) @db.DateTime(3)
+  projectStatus String @db.VarChar(32)
+  taskTotal Int
+  taskDone Int
+  overdueTasks Int
+  openRequirements Int
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  @@unique([projectId, day])
+  @@index([day, projectId])
+}
+
 model Document {
+  testExecutions TestExecution[]
   id            String                @id @default(uuid()) @db.Char(36)
   projectId     String                @db.Char(36)
   filename      String                @db.VarChar(512)
   deliverable   Deliverable?
   meetingRecord MeetingRecord?
+  meetingAttachmentId String? @db.Char(36)
+  meetingAttachment MeetingRecord? @relation("MeetingAttachments", fields: [meetingAttachmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   assetJob      AssetSourceJob?
   documentType  String                @default("DOCUMENT") @db.VarChar(32)
   visibleRoles  Json                  @default("[\"ADMIN\",\"PM\",\"QA\",\"MEMBER\"]")
@@ -520,6 +980,7 @@ model Document {
   project       Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   @@unique([projectId, uploadKey])
+  @@index([meetingAttachmentId, createdAt])
   @@index([projectId, createdAt])
 }
 
@@ -574,6 +1035,7 @@ model MeetingRecord {
   visibleRoles Json    @default("[\"ADMIN\",\"PM\",\"QA\",\"MEMBER\"]")
   documentId  String?  @unique @db.Char(36)
   document    Document? @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  attachments Document[] @relation("MeetingAttachments")
   createdAt   DateTime @default(now()) @db.DateTime(3)
   updatedAt   DateTime @updatedAt @db.DateTime(3)
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -703,4 +1165,19 @@ model SyncFailure {
   @@index([target, retryCount, createdAt])
   @@index([entityType, entityId])
   @@index([projectId, createdAt])
+}
+
+model ProjectComplianceCheck {
+  id String @id @default(uuid()) @db.Char(36)
+  projectId String @db.Char(36)
+  actorId String @db.Char(36)
+  ruleVersion Int @default(1) @db.UnsignedInt
+  projectVersion Int @db.UnsignedInt
+  passed Boolean
+  counts Json
+  fingerprint String @db.Char(64)
+  createdAt DateTime @default(now()) @db.DateTime(3)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@index([projectId, actorId, createdAt])
 }

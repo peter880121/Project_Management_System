@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import type { z } from "zod";
 import { BusinessError } from "@/modules/audit/errors";
 import { ProjectError } from "@/modules/projects/services";
-import { assertDraft, loadMeetingTx, loadSuggestionTx, readItems } from "@/modules/ai/meetings/repository";
+import { loadMeetingTx, loadSuggestionTx, readItems } from "@/modules/ai/meetings/repository";
 import type { meetingTaskSourceSchema } from "@/modules/ai/meetings/types";
 export type MeetingTaskSource = z.infer<typeof meetingTaskSourceSchema>;
 export async function prepareMeetingTask(tx: Prisma.TransactionClient, projectId: string, source: MeetingTaskSource) {
@@ -17,7 +17,8 @@ export async function prepareMeetingTask(tx: Prisma.TransactionClient, projectId
       if (!task) throw new BusinessError("关联任务不存在，请联系管理员核对", 409);
       return { existing: task, meeting, items, item };
     }
-    assertDraft(meeting, source.expectedVersion);
+    if (meeting.rowVersion !== source.expectedVersion) throw new BusinessError("纪要已变化，请刷新后重试", 409);
+    if (meeting.status !== "DRAFT" && !item) throw new BusinessError("定稿纪要只允许关联既有行动项，不能新增或改写正文", 409);
     if (!item && source.suggestionId) {
       const suggestion = await loadSuggestionTx(tx, projectId, meeting, source.suggestionId);
       item = suggestion.result.actionItems.find(item => item.id === source.actionItemId);

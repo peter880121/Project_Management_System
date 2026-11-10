@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { documentFormat, MAX_DOCUMENT_BYTES } from "./formats";
+import { decodeDocumentText } from "./text-decoding";
+import { readDocx } from "./docx";
 
-export const MAX_PDF_BYTES = 20 * 1024 * 1024;
-const MAX_REQUEST_BYTES = MAX_PDF_BYTES + 64 * 1024;
+export const MAX_PDF_BYTES = MAX_DOCUMENT_BYTES;
+const MAX_REQUEST_BYTES = MAX_DOCUMENT_BYTES + 64 * 1024;
 export class DocumentError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
@@ -17,6 +20,22 @@ export function validatePdf(filename: string, mediaType: string, bytes: Uint8Arr
   if (!bytes.byteLength || bytes.byteLength > MAX_PDF_BYTES) throw new DocumentError("PDF 需大于 0 且不超过 20 MB", 413);
   if (Buffer.from(bytes.subarray(0, 5)).toString("ascii") !== "%PDF-") throw new DocumentError("文件头不是 PDF", 415);
   return { filename: filename.trim(), mediaType: "application/pdf", fileSize: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") };
+}
+export function validateDocument(filename: string, mediaType: string, bytes: Uint8Array) {
+  filename = filename.trim();
+  if (!z.string().min(1).max(255).refine(name => !/[\x00-\x1f\x7f/\\]/.test(name)).safeParse(filename).success) throw new DocumentError("文件名无效", 400);
+  const format = documentFormat(filename);
+  if (!format) throw new DocumentError("仅支持 PDF、DOCX、TXT、TEXT、MD 文件", 415);
+  if (!bytes.byteLength || bytes.byteLength > format.maxBytes) throw new DocumentError(`文件须大于 0 且不超过 ${format.maxBytes / 1024 / 1024} MB`, 413);
+  const declared = mediaType.split(";")[0].trim().toLowerCase();
+  const allowed = [format.mediaType, "", "application/octet-stream", ...(format.extension === "md" ? ["text/plain", "text/x-markdown"] : [])];
+  if (!allowed.includes(declared)) throw new DocumentError("文件类型与扩展名不一致", 415);
+  try {
+    if (format.extension === "pdf") validatePdf(filename, "application/pdf", bytes);
+    else if (format.extension === "docx") readDocx(bytes);
+    else decodeDocumentText(bytes);
+  } catch (error) { if (error instanceof DocumentError) throw error; throw new DocumentError(format.extension === "docx" ? "DOCX 无效、损坏、加密、含不支持的内容或解压超限" : "文本编码或内容无效，请转换为 UTF-8 文本后上传", 415); }
+  return { filename, mediaType: format.mediaType, fileSize: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 export async function readUpload(request: Request) {
   const type = request.headers.get("content-type") || "";
@@ -43,5 +62,5 @@ export async function readUpload(request: Request) {
   if (!(file instanceof File) || form.get("syntheticOnly") !== "true") throw new DocumentError("请选择文件并确认仅含合成数据", 400);
   const uploadKey = documentId(String(form.get("uploadKey")));
   const bytes = Buffer.from(await file.arrayBuffer());
-  return { ...validatePdf(file.name, file.type, bytes), bytes, uploadKey };
+  return { ...validateDocument(file.name, file.type, bytes), bytes, uploadKey };
 }

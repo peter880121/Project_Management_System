@@ -40,7 +40,7 @@ describe.sequential("planning and capacity in isolated MySQL", () => {
   afterAll(async () => { await db.$disconnect(); try { if (/^medpm_planning_it_[a-f0-9]{32}$/.test(name)) await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS \`${name}\``); } finally { await admin.$disconnect(); } });
   it("saves schedule/dependencies and audited UTC date semantics atomically", async () => {
     await updateTaskSchedule(a, plan([b]), { actorId, ip: "192.0.2.90", userAgent: "synthetic-planning-test" });
-    const task = await db.task.findUniqueOrThrow({ where: { id: a } }); expect(task.scheduleVersion).toBe(1); expect(task.dueDate?.toISOString()).toBe("2026-10-18T23:59:59.999Z"); expect(task.status).toBe("TODO");
+    const task = await db.task.findUniqueOrThrow({ where: { id: a } }); expect(task.scheduleVersion).toBe(1); expect(task.dueDate?.toISOString()).toBe("2026-10-18T00:00:00.000Z"); expect(task.status).toBe("TODO");
     expect(await db.taskDependency.count({ where: { taskId: a } })).toBe(1);
     const audit = await db.auditLog.findFirstOrThrow({ where: { entityId: a, action: "TASK_SCHEDULE_UPDATED" } }); expect(audit.before).toMatchObject({ version: 0 }); expect(audit.after).toMatchObject({ version: 1, dependencyIds: [b] });
   });
@@ -99,7 +99,12 @@ describe.sequential("planning and capacity in isolated MySQL", () => {
   });
   it("supports structural rollback while preserving task rows and audit evidence", async () => {
     await updateTaskSchedule(a, plan(), { actorId }); const count = await db.auditLog.count(); const directory = "prisma/migrations/20261015040000_scheduling_capacity/";
+    const planActualDirectory = "prisma/migrations/20261023000000_task_plan_actual/";
+    // Reverse dependency order: the generated planning marker depends on plannedStartDate.
+    sql(readFileSync(planActualDirectory + "down.sql", "utf8"));
     sql(readFileSync(directory + "down.sql", "utf8")); expect(await db.auditLog.count()).toBe(count); expect(await db.$queryRaw`SELECT id, dueDate FROM Task WHERE id = ${a}`).toHaveLength(1);
-    sql(readFileSync(directory + "migration.sql", "utf8")); expect((await db.task.findUniqueOrThrow({ where: { id: a } })).scheduleVersion).toBe(0);
+    sql(readFileSync(directory + "migration.sql", "utf8"));
+    sql(readFileSync(planActualDirectory + "migration.sql", "utf8"));
+    expect((await db.task.findUniqueOrThrow({ where: { id: a } })).scheduleVersion).toBe(0);
   });
 });

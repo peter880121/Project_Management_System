@@ -1,3 +1,4 @@
+import { FROZEN_PROJECT_STATUSES } from "@/modules/projects/freeze";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { visibleProjectWhere } from "@/modules/auth/project-access";
@@ -5,14 +6,14 @@ export const findSchedule = (tx: Prisma.TransactionClient, projectId: string) =>
 export const scheduleById = (tx: Prisma.TransactionClient, id: string) => tx.riskScanSchedule.findUnique({ where: { id }, include: { configuredBy: true, project: true } });
 export const projectById = (tx: Prisma.TransactionClient, id: string) => tx.project.findUnique({ where: { id } });
 export const saveSchedule = (tx: Prisma.TransactionClient, data: { projectId: string; configuredById: string; enabled: boolean; intervalMinutes: number; nextRunAt: Date }) => tx.riskScanSchedule.upsert({ where: { projectId: data.projectId }, create: data, update: { ...data, version: { increment: 1 } } });
-export const dueSchedule = (now: Date) => prisma.riskScanSchedule.findFirst({ where: { project: { status: { notIn: ["ARCHIVED", "PENDING_ACCEPTANCE"] } }, enabled: true, nextRunAt: { lte: now } }, orderBy: [{ nextRunAt: "asc" }, { id: "asc" }], select: { id: true, projectId: true } });
+export const dueSchedule = (now: Date) => prisma.riskScanSchedule.findFirst({ where: { project: { status: { notIn: [...FROZEN_PROJECT_STATUSES, "PENDING_ACCEPTANCE"] } }, enabled: true, nextRunAt: { lte: now } }, orderBy: [{ nextRunAt: "asc" }, { id: "asc" }], select: { id: true, projectId: true } });
 export const activeJob = (tx: Prisma.TransactionClient, scheduleId: string) => tx.riskScanJob.findFirst({ where: { scheduleId, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
 export const pendingJobs = (tx: Prisma.TransactionClient, scheduleId: string) => tx.riskScanJob.findMany({ where: { scheduleId, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
 export const disableSchedule = (tx: Prisma.TransactionClient, id: string) => tx.riskScanSchedule.update({ where: { id }, data: { enabled: false, version: { increment: 1 } } });
 export const insertJob = (tx: Prisma.TransactionClient, data: Prisma.RiskScanJobUncheckedCreateInput) => tx.riskScanJob.create({ data });
 export const jobAtDue = (tx: Prisma.TransactionClient, scheduleId: string, dueAt: Date) => tx.riskScanJob.findUnique({ where: { scheduleId_dueAt: { scheduleId, dueAt } }, select: { id: true } });
 export const advanceSchedule = (tx: Prisma.TransactionClient, id: string, nextRunAt: Date) => tx.riskScanSchedule.update({ where: { id }, data: { nextRunAt } });
-export const candidateJob = (tx: Prisma.TransactionClient, now: Date) => tx.riskScanJob.findFirst({ where: { project: { status: { notIn: ["ARCHIVED", "PENDING_ACCEPTANCE"] } }, status: { in: ["QUEUED", "RUNNING"] }, nextRunAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, orderBy: [{ nextRunAt: "asc" }, { id: "asc" }] });
+export const candidateJob = (tx: Prisma.TransactionClient, now: Date) => tx.riskScanJob.findFirst({ where: { project: { status: { notIn: [...FROZEN_PROJECT_STATUSES, "PENDING_ACCEPTANCE"] } }, status: { in: ["QUEUED", "RUNNING"] }, nextRunAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, orderBy: [{ nextRunAt: "asc" }, { id: "asc" }] });
 export const updateJob = (tx: Prisma.TransactionClient, args: Prisma.RiskScanJobUpdateManyArgs) => tx.riskScanJob.updateMany(args);
 export const loadJob = (tx: Prisma.TransactionClient, id: string) => tx.riskScanJob.findUnique({ where: { id } });
 export const publicJobSelect = { id: true, projectId: true, status: true, attempts: true, errorCode: true, dueAt: true, nextRunAt: true, completedAt: true, suggestionCount: true, createdAt: true } satisfies Prisma.RiskScanJobSelect;

@@ -11,6 +11,7 @@ export const complianceSummarySchema = z.object({
 export type ComplianceSummary = z.infer<typeof complianceSummarySchema>;
 
 export type ComplianceAuditInput = {
+  taskRequirementLinks?: { id: string; taskId: string; requirementId: string }[];
   auditLogs: { id: string; action: string; entityType: string; entityId: string; createdAt: Date; actorId?: string; before?: Prisma.JsonValue; after?: Prisma.JsonValue }[];
   tasks: { id: string; status: string; requirementId: string | null; updatedAt: Date; reviewedRequirementVersion: number | null }[];
   requirements: { id: string; updatedAt: Date; version: number; status: string }[];

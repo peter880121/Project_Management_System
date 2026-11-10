@@ -1,11 +1,15 @@
+import { assertTaskWritable, assertTaskVersion, taskCancelSchema } from "@/modules/tasks/lifecycle";
 import { prepareMeetingTask, type MeetingTaskSource } from "@/modules/tasks/meeting-source";
+import { taskPlanData, calendarDateTime, effortHoursSchema, phaseSchema } from "@/modules/tasks/plan";
+import { createTaskSchema } from "@/modules/tasks/create-schema";
+import { taskPhase } from "@/modules/projects/task-phases";
 import { randomUUID } from "node:crypto";
 import type { Prisma, TaskStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { canTransitionTaskStatus } from "@/modules/tasks/status";
 import { assertProjectAccessTx, participant, ProjectAccessError, lockBusinessActor } from "@/modules/auth/project-access";
-import { signatureSchema } from "@/modules/tasks/signature";
+import { taskCompletionSchema } from "@/modules/tasks/signature";
 import { verifyPassword } from "@/modules/auth/password";
 import { BusinessError } from "./errors";
 import { prerequisiteMessage, suggestionTitle } from "@/modules/ai/wbs/review-state";
@@ -22,9 +26,20 @@ async function suggestionProjectId(id: string) {
 }
 
 export type AuditAction =
+  | "AUDIT_ISSUE_CHANGED" | "AUDIT_ISSUE_DETECTED" | "AUDIT_REPORT_EXPORTED"
+  | "DECISION_SNAPSHOT_CAPTURED"
+  | "WEEKLY_REPORT_REVISION_STARTED"
+  | "WEEKLY_REPORT_DRAFTED" | "WEEKLY_REPORT_UPDATED" | "WEEKLY_REPORT_SUBMITTED" | "WEEKLY_REPORT_READ" | "WEEKLY_REPORT_RETURNED" | "WEEKLY_REPORT_EXEMPTED"
+  | "REQUIREMENT_WORKFLOW_CHANGED" | "REQUIREMENT_INTAKE_CREATED" | "REQUIREMENT_INTAKE_TRIAGED" | "REQUIREMENT_BASELINE_CREATED" | "REQUIREMENT_IMAGE_UPLOADED"
+  | "RAG_WEB_SEARCH_CONFIRMED" | "RAG_WEB_SEARCH_STARTED"
+  | "RAG_CONVERSATION_CREATED" | "RAG_CONVERSATION_UPDATED" | "RAG_QUESTION_SUBMITTED" | "RAG_ANSWER_COMPLETED" | "RAG_ANSWER_STOPPED" | "RAG_ANSWER_FAILED"
+  | "MEETING_ATTACHMENT_ADDED"
+  | "PROJECT_DETAILS_UPDATED" | "PROJECT_OWNER_TRANSFERRED" | "TASK_DETAILS_UPDATED"
+  | "PROJECT_PAUSED" | "PROJECT_RESUMED" | "PROJECT_CANCELLED"
   | "PROJECT_ACTIVATED" | "PROJECT_SUBMITTED" | "PROJECT_QA_APPROVED" | "PROJECT_ARCHIVED" | "PROJECT_ACCEPTANCE_REJECTED" | "PROJECT_ACCEPTANCE_WITHDRAWN" | "PROJECT_NOTIFICATION_READ"
   | "DELIVERABLE_CREATED" | "DELIVERABLE_UPDATED" | "DELIVERABLE_SUBMITTED" | "DELIVERABLE_REVIEWED"
   | "MEETING_CREATED" | "ASSET_INDEX_REQUESTED" | "ASSET_SOURCE_SYNCED" | "ASSET_SOURCE_FAILED" | "TASK_DELIVERABLE_REQUIREMENT_CHANGED"
+  | "PROJECT_COMPLIANCE_CHECKED" | "PROJECT_ACCEPTANCE_OVERRIDE_SUBMITTED" | "ACCEPTANCE_OVERRIDE_PERMISSION_CHANGED" | "AI_ACCEPTANCE_DIAGNOSIS_GENERATED"
   | "AI_GENERATION_CANCELLED" | "AI_MEETING_GENERATED" | "AI_MEETING_GENERATION_FAILED" | "MEETING_UPDATED" | "MEETING_FINALIZED" | "MEETING_ACTION_ITEM_CONVERTED"
   | "PROJECT_MEMBER_UPDATED"
   | "COMPLIANCE_EXPORT_PREPARED"
@@ -64,6 +79,7 @@ export type AuditAction =
   | "TEST_CASE_UPDATED"
   | "TASK_REQUIREMENT_CHANGED"
   | "VECTOR_SYNC_RETRIED"
+  | "TASK_CANCELLED" | "TASK_REOPENED" | "TASK_DEPENDENCY_INVALIDATED"
   | "TASK_CREATED"
   | "TASK_STATUS_CHANGED"
   | "TASK_SIGNED_AND_COMPLETED"
@@ -87,7 +103,7 @@ export type AuditAction =
 const acceptedWbsPayloadSchema = z.object({
   title: z.string().min(1).max(191),
   description: z.string().max(5000),
-  estimateHours: z.number().finite().positive().max(10_000),
+  estimateHours: effortHoursSchema,
   suggestedRole: z.enum(["PM", "MEMBER", "QA", "ADMIN"]),
   dependencyIds: z.array(z.uuid()).max(30),
   dependencyTitles: z.array(z.string()).max(30),
@@ -99,6 +115,9 @@ export async function createTask(input: {
   requiresDeliverable?: boolean;
   assigneeId?: string;
   dueDate?: string | null;
+  plannedStartDate?: string | null;
+  phase: string;
+  estimateHours: number;
   meetingSource?: MeetingTaskSource;
   projectId: string;
   title: string;
@@ -106,6 +125,9 @@ export async function createTask(input: {
   requirementId?: string;
   actorId: string;
 } & AuditRequestMetadata) {
+  const parsed = createTaskSchema.safeParse({ title: input.title, description: input.description, phase: input.phase, estimateHours: input.estimateHours, dueDate: input.dueDate, plannedStartDate: input.plannedStartDate, requiresDeliverable: input.requiresDeliverable, assigneeId: input.assigneeId, requirementId: input.requirementId, meetingSource: input.meetingSource });
+  if (!parsed.success) throw new BusinessError("请填写有效的预计工时、预计完成日期和所属阶段", 400);
+  const plan = taskPlanData(parsed.data, input.description);
   return prisma.$transaction(async (tx) => {
     await lockBusinessActor(tx, input.actorId, input.meetingSource ? ["PM"] : ["ADMIN", "PM"], input.projectId, input.assigneeId ? [input.assigneeId] : []);
     await assertProjectAccessTx(tx, input.actorId, input.projectId);
@@ -117,26 +139,29 @@ export async function createTask(input: {
     }
     const project = await tx.project.findUnique({ where: { id: input.projectId }, select: { id: true } });
     if (!project) throw new BusinessError("Project not found", 404);
+    let managedRequirement = false;
     if (input.requirementId) {
-      const requirement = await tx.requirement.findFirst({ where: { id: input.requirementId, projectId: input.projectId }, select: { id: true } });
+      const requirement = await tx.requirement.findFirst({ where: { id: input.requirementId, projectId: input.projectId, OR: [{ managed: false }, { workflowState: { in: ["DRAFT", "APPROVED", "IMPLEMENTING"] } }] }, select: { id: true, managed: true } });
       if (!requirement) throw new BusinessError("Requirement not found in this project", 404);
+      managedRequirement = requirement.managed;
     }
     const task = await tx.task.create({ data: {
       projectId: input.projectId,
       title: input.title,
-      description: input.description,
+      ...plan,
+      completionRoundId: randomUUID(), signatureEvidenceVersion: 2,
       requirementId: input.requirementId,
       requiresDeliverable: input.requiresDeliverable ?? false,
       assigneeId: input.assigneeId,
-      dueDate: input.dueDate ? new Date(`${input.dueDate}T23:59:59.999Z`) : null,
     } });
+    if (input.requirementId && managedRequirement) await tx.requirementTaskLink.create({ data: { projectId: input.projectId, requirementId: input.requirementId, taskId: task.id, createdById: input.actorId } });
     await recordAudit(tx, {
       actorId: input.actorId,
       projectId: input.projectId,
       action: "TASK_CREATED",
       entityType: "Task",
       entityId: task.id,
-      after: { title: task.title, status: task.status, requirementId: task.requirementId, requiresDeliverable: task.requiresDeliverable, assigneeId: task.assigneeId, dueDate: task.dueDate?.toISOString() ?? null },
+      after: { title: task.title, status: task.status, requirementId: task.requirementId, requiresDeliverable: task.requiresDeliverable, assigneeId: task.assigneeId, phase: parsed.data.phase, estimateHours: Number(task.estimateHours), plannedStartDate: task.plannedStartDate?.toISOString() ?? null, dueDate: task.dueDate?.toISOString() ?? null, planningStatus: task.planningStatus, completionRoundId: task.completionRoundId, rowVersion: task.rowVersion, signatureEvidenceVersion: task.signatureEvidenceVersion },
       ip: input.ip,
       userAgent: input.userAgent,
     });
@@ -189,33 +214,47 @@ export async function changeTaskStatus(input: {
   signaturePassword?: string;
   signatureReason?: string;
   actualHours?: number;
+  completedAt?: string;
+  expectedCompletionRoundId?: string | null;
+  expectedRowVersion?: number;
+  cancelReason?: string;
   actorId: string;
 } & AuditRequestMetadata) {
   const projectId = await taskProjectId(input.taskId);
   return prisma.$transaction(async (tx) => {
     const actor = await lockBusinessActor(tx, input.actorId, ["ADMIN", "PM", "MEMBER"], projectId);
+    await assertProjectAccessTx(tx, input.actorId, projectId);
     const task = await tx.task.findUnique({ where: { id: input.taskId } });
     if (!task) throw new BusinessError("Task not found", 404);
+    assertTaskWritable(task);
+    if (actor.role === "MEMBER" && (task.assigneeId !== input.actorId || task.status === "DONE" || input.status === "CANCELLED")) throw new ProjectAccessError("成员只能执行本人任务，不能取消或重开任务");
+    const reopening = task.status === "DONE" && ["TODO", "IN_PROGRESS"].includes(input.status);
+    assertTaskVersion(task, input.expectedRowVersion, input.status === "CANCELLED" || reopening || input.status === "DONE" && task.signatureEvidenceVersion === 2);
+    if (input.status === "CANCELLED") {
+      if (!["PM", "ADMIN"].includes(actor.role)) throw new ProjectAccessError("仅 PM 或 ADMIN 可以取消任务");
+      if (!taskCancelSchema.safeParse({ status: input.status, cancelReason: input.cancelReason, expectedRowVersion: input.expectedRowVersion }).success) throw new BusinessError("取消原因必填，须为 10～1000 字", 400);
+    }
     if (actor.role === "MEMBER" && (task.assigneeId !== input.actorId || task.status === "DONE")) throw new ProjectAccessError("成员仅可更新本人负责且未完成的任务");
-    if (input.status === "DONE" && (!input.actualHours || input.actualHours <= 0 || !Number.isFinite(input.actualHours))) throw new BusinessError("Actual hours are required to complete a task");
+    if (input.status === "DONE" && !taskCompletionSchema.safeParse({ status: "DONE", actualHours: input.actualHours, completedAt: input.completedAt, signaturePassword: input.signaturePassword, signatureReason: input.signatureReason, expectedCompletionRoundId: input.expectedCompletionRoundId, expectedRowVersion: input.expectedRowVersion }).success) throw new BusinessError("请填写有效的实际完成日期、实际工时、签名密码和签名意图", 400);
     if (task.status === input.status) throw new BusinessError("Task status is unchanged");
     if (!canTransitionTaskStatus(task.status, input.status)) throw new BusinessError(`Invalid task status transition: ${task.status} -> ${input.status}`);
+    if (["IN_PROGRESS", "DONE"].includes(input.status) && await tx.task.findFirst({ where: { id: task.id, dependencies: { some: { dependsOn: { status: "CANCELLED" } } } }, select: { id: true } })) throw new BusinessError("前置任务已被取消，请重新评估依赖", 409);
     const completionEvidence = input.status === "DONE" && task.requiresDeliverable ? await tx.deliverable.findFirst({ where: { taskId: task.id, projectId: task.projectId, status: "APPROVED", document: { storageStatus: "AVAILABLE" } }, orderBy: [{ reviewedAt: "desc" }, { id: "asc" }], select: { id: true, version: true, reviewedById: true, document: { select: { id: true, sha256: true } } } }) : null;
     if (input.status === "DONE" && task.requiresDeliverable && !completionEvidence) throw new BusinessError("请先上传并审批通过的交付物", 400);
     if (input.status === "DONE") {
-      const signature = signatureSchema.safeParse({ signaturePassword: input.signaturePassword, signatureReason: input.signatureReason });
-      if (!signature.success) throw new BusinessError("请提供有效的签名密码和签名意图", 400);
+      if (input.expectedCompletionRoundId !== undefined && input.expectedCompletionRoundId !== task.completionRoundId) throw new BusinessError("任务完成轮次已变化，请刷新后重新签署", 409);
       const credentials = await tx.user.findUnique({ where: { id: input.actorId }, select: { passwordHash: true } });
-      if (!credentials?.passwordHash || !await verifyPassword(signature.data.signaturePassword, credentials.passwordHash)) {
+      if (!credentials?.passwordHash || !await verifyPassword(input.signaturePassword!, credentials.passwordHash)) {
         console.warn("TASK_SIGNATURE_REJECTED", { actorId: input.actorId, taskId: input.taskId, createdAt: new Date().toISOString() });
         throw new BusinessError("签名密码错误，请重新输入", 401);
       }
     }
     const changed = await tx.task.updateMany({
-      where: { id: task.id, status: task.status, ...(actor.role === "MEMBER" ? { assigneeId: input.actorId } : {}) },
+      where: { id: task.id, status: task.status, rowVersion: task.rowVersion, ...(actor.role === "MEMBER" ? { assigneeId: input.actorId } : {}) },
       data: {
         status: input.status,
-        ...(input.status === "DONE" ? { actualHours: input.actualHours, completedAt: new Date() } : {}),
+        ...(input.status === "CANCELLED" ? { cancelReason: input.cancelReason!.trim(), cancelledAt: new Date(), cancelledById: input.actorId } : {}),
+        ...(input.status === "DONE" ? { actualHours: input.actualHours, completedAt: calendarDateTime(input.completedAt!), completionRoundId: randomUUID(), signatureEvidenceVersion: 2 } : reopening ? { actualHours: null, completedAt: null, completionRoundId: null, signatureEvidenceVersion: 2 } : {}),
       },
     });
     if (changed.count !== 1) throw new BusinessError("Task changed concurrently; retry the operation");
@@ -223,14 +262,18 @@ export async function changeTaskStatus(input: {
     await recordAudit(tx, {
       actorId: input.actorId,
       projectId: task.projectId,
-      action: input.status === "DONE" ? "TASK_SIGNED_AND_COMPLETED" : "TASK_STATUS_CHANGED",
+      action: input.status === "CANCELLED" ? "TASK_CANCELLED" : reopening ? "TASK_REOPENED" : input.status === "DONE" ? "TASK_SIGNED_AND_COMPLETED" : "TASK_STATUS_CHANGED",
       entityType: "Task",
       entityId: task.id,
-      before: { status: task.status, actualHours: task.actualHours?.toString() ?? null, completedAt: task.completedAt?.toISOString() ?? null },
-      after: { ...(input.status === "DONE" ? { signatureReason: input.signatureReason!, requiresDeliverable: !!task.requiresDeliverable, completionEvidence } : {}), status: updated.status, actualHours: updated.actualHours?.toString() ?? null, completedAt: updated.completedAt?.toISOString() ?? null },
+      before: { status: task.status, actualHours: task.actualHours?.toString() ?? null, completedAt: task.completedAt?.toISOString() ?? null, completionRoundId: task.completionRoundId, rowVersion: task.rowVersion, signatureEvidenceVersion: task.signatureEvidenceVersion },
+      after: { ...(input.status === "DONE" ? { signatureReason: input.signatureReason!, requiresDeliverable: !!task.requiresDeliverable, completionEvidence } : {}), cancelReason: updated.cancelReason, cancelledAt: updated.cancelledAt?.toISOString() ?? null, cancelledById: updated.cancelledById, rowVersion: updated.rowVersion, signatureEvidenceVersion: updated.signatureEvidenceVersion, status: updated.status, actualHours: updated.actualHours === null ? null : Number(updated.actualHours), completedAt: updated.completedAt?.toISOString() ?? null, completionRoundId: updated.completionRoundId },
       ip: input.ip,
       userAgent: input.userAgent,
     });
+    if (input.status === "CANCELLED") {
+      const dependents = await tx.taskDependency.findMany({ where: { dependsOnTaskId: task.id }, select: { taskId: true } });
+      for (const dependent of dependents) await recordAudit(tx, { actorId: input.actorId, projectId, action: "TASK_DEPENDENCY_INVALIDATED", entityType: "Task", entityId: dependent.taskId, after: { cancelledPredecessorId: task.id, reason: input.cancelReason!.trim() }, ip: input.ip, userAgent: input.userAgent });
+    }
     return updated;
   });
 }
@@ -252,7 +295,9 @@ export async function acceptWbsSuggestion(input: {
     const output = parsedOutput.data;
     const provenance = suggestion.input && typeof suggestion.input === "object" && !Array.isArray(suggestion.input) ? suggestion.input.sourceTaskId : undefined;
     const sourceTaskId = typeof provenance === "string" ? provenance : undefined;
-    if (sourceTaskId && !await tx.task.findFirst({ where: { id: sourceTaskId, projectId: suggestion.projectId }, select: { id: true } })) throw new BusinessError("来源任务已不存在", 409);
+    const sourceTask = sourceTaskId ? await tx.task.findFirst({ where: { id: sourceTaskId, projectId: suggestion.projectId }, select: { id: true, description: true, status: true } }) : null;
+    if (sourceTask) assertTaskWritable(sourceTask);
+    if (sourceTaskId && !sourceTask) throw new BusinessError("来源任务已不存在", 409);
     const dependencySuggestions = output.dependencyIds.length === 0 ? [] : await tx.aiSuggestion.findMany({
       where: { id: { in: output.dependencyIds }, projectId: suggestion.projectId, type: "WBS" },
     });
@@ -269,11 +314,14 @@ export async function acceptWbsSuggestion(input: {
     });
     if (dependencyTaskIds.length !== output.dependencyIds.length) throw new BusinessError("An accepted prerequisite is missing its task record");
 
+    if (dependencyTaskIds.length && await tx.task.count({ where: { id: { in: dependencyTaskIds }, status: "CANCELLED" } })) throw new BusinessError("前置任务已被取消，请重新评估依赖", 409);
+    const phase = phaseSchema.safeParse(taskPhase(output.description) ?? taskPhase(sourceTask?.description) ?? "工作分解");
+    if (!phase.success) throw new BusinessError("来源任务阶段无效，请先修正阶段再采纳", 400);
     const task = await tx.task.create({ data: {
       projectId: suggestion.projectId,
       title: output.title,
-      description: output.description,
-      estimateHours: output.estimateHours,
+      ...taskPlanData({ phase: phase.data, estimateHours: output.estimateHours, dueDate: null, plannedStartDate: null }, output.description),
+      completionRoundId: randomUUID(), signatureEvidenceVersion: 2,
     } });
     if (dependencyTaskIds.length > 0) {
       await tx.taskDependency.createMany({ data: dependencyTaskIds.map((dependsOnTaskId) => ({ id: randomUUID(), taskId: task.id, dependsOnTaskId })) });
@@ -292,7 +340,7 @@ export async function acceptWbsSuggestion(input: {
       action: "TASK_CREATED",
       entityType: "Task",
       entityId: task.id,
-      after: { title: task.title, status: task.status, estimateHours: task.estimateHours?.toString(), dependencies: dependencyTaskIds, aiSuggestionId: suggestion.id, ...(sourceTaskId ? { sourceTaskId } : {}) },
+      after: { title: task.title, status: task.status, estimateHours: task.estimateHours?.toString(), planningStatus: task.planningStatus, dueDate: null, plannedStartDate: null, phase: taskPhase(task.description), dependencies: dependencyTaskIds, aiSuggestionId: suggestion.id, ...(sourceTaskId ? { sourceTaskId } : {}) },
       ip: input.ip,
       userAgent: input.userAgent,
     });
@@ -314,6 +362,7 @@ export async function acceptWbsSuggestion(input: {
 export async function assignTask(input: {
   taskId: string;
   assigneeId: string | null;
+  expectedRowVersion?: number;
   actorId: string;
 } & AuditRequestMetadata) {
   const projectId = await taskProjectId(input.taskId);
@@ -321,6 +370,8 @@ export async function assignTask(input: {
     await lockBusinessActor(tx, input.actorId, ["PM"], projectId, input.assigneeId ? [input.assigneeId] : []);
     const task = await tx.task.findUnique({ where: { id: input.taskId } });
     if (!task) throw new BusinessError("Task not found", 404);
+    await assertProjectAccessTx(tx, input.actorId, projectId);
+    assertTaskWritable(task); assertTaskVersion(task, input.expectedRowVersion);
     if (task.assigneeId === input.assigneeId) throw new BusinessError("Task assignee is unchanged");
     if (input.assigneeId && !await participant(tx, task.projectId, input.assigneeId)) throw new ProjectAccessError("负责人必须先加入项目", 400);
     const changed = await tx.task.updateMany({

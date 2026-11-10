@@ -2,7 +2,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "./session";
 import { assertProjectAccess, ProjectAccessError } from "./project-access";
-import { canReadRoles } from "@/modules/assets/validation";
+import { canReadDocument, meetingAttachmentSelect } from "@/modules/documents/access";
 import { assertProjectWritable, requestChangesBusiness } from "@/modules/projects/write-scope";
 import { freezeErrorResponse } from "@/modules/projects/freeze";
 async function resolveScope(request: Request): Promise<string | null | undefined> {
@@ -36,8 +36,8 @@ export function projectScoped<C>(handler: (request: Request, context: C) => Prom
       const actor = await getCurrentUser(); if (!actor) return Response.json({ error: "Authentication required" }, { status: 401 });
       const assetParts = new URL(request.url).pathname.split("/").filter(Boolean);
       if (assetParts[1] === "documents" && z.uuid().safeParse(assetParts[2]).success) {
-        const doc = await prisma.document.findUnique({ where: { id: assetParts[2] }, select: { visibleRoles: true } });
-        if (doc && !canReadRoles(doc.visibleRoles, actor.role)) return Response.json({ error: "无权访问此资产" }, { status: 403 });
+        const doc = await prisma.document.findUnique({ where: { id: assetParts[2] }, select: { projectId: true, visibleRoles: true, meetingAttachment: { select: meetingAttachmentSelect } } });
+        if (doc && !canReadDocument(doc, actor.role)) return Response.json({ error: "无权访问此资产" }, { status: 403 });
       }
       const scope = await resolveScope(request);
       if (actor.role !== "ADMIN") {

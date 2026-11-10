@@ -24,7 +24,7 @@ test("PM queues a PDF; worker parses asynchronously; QA previews cited content a
   expect((await page.request.post("/api/auth/login", { data: { email: emails[0], password } })).status()).toBe(200);
   await page.goto(`/projects/${projectId}/documents`);
   const bytes = syntheticPdf();
-  await page.getByLabel("选择 PDF", { exact: true }).setInputFiles({ name: "synthetic-release.pdf", mimeType: "application/pdf", buffer: bytes });
+  await page.getByLabel("选择文件", { exact: true }).setInputFiles({ name: "synthetic-release.pdf", mimeType: "application/pdf", buffer: bytes });
   await page.getByRole("checkbox", { name: "确认文件仅含合成数据，不含真实患者信息", exact: true }).check();
   await page.getByRole("button", { name: "上传文档", exact: true }).click();
   await expect(page.getByText(/可下载/)).toBeVisible({ timeout: 20000 });

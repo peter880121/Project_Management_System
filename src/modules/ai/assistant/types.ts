@@ -1,0 +1,17 @@
+import { z } from "zod";
+export const conversationCreateSchema = z.object({ projectId: z.uuid().nullable().default(null) }).strict();
+export const conversationEditSchema = z.object({ expectedVersion: z.number().int().positive(), title: z.string().trim().min(1).max(191).optional(), hidden: z.literal(true).optional() }).strict().refine(value => value.title !== undefined || value.hidden, "请提供更新内容");
+export const assistantModeSchema = z.enum(["SMART", "INTERNAL", "WEB"]);
+export const searchConfirmationSchema = z.object({ query: z.string().min(1).max(2000), sensitive: z.boolean(), message: z.string().max(300), token: z.string().min(1).max(2048), expiresAt: z.number().int().positive() });
+export const questionSchema = z.object({ question: z.string().trim().min(1).max(2000).refine(value => /[\p{L}\p{N}]/u.test(value), "请输入有效问题"), requestKey: z.uuid(), expectedVersion: z.number().int().positive(), syntheticOnly: z.literal(true), mode: assistantModeSchema.default("INTERNAL"), webConfirmationToken: z.string().min(1).max(2048).optional() }).strict();
+export type Citation = { ordinal: number; sourceType: "DOCUMENT" | "CONTACT" | "WEB"; projectId: string | null; documentId: string | null; chunkId: string | null; contactId: string | null; version: number | null; page: number | null; title: string; snippet: string; contentSha256: string; webUrl?: string | null; retrievedAt?: Date | string | null; publishedAt?: Date | string | null };
+export type PublicCitation = Citation & { sourceUrl: string | null };
+export type ChatMessage = { id: string; requestKey?: string; mode?: string; intent?: string | null; role: string; content: string; status: string; retrievalMode: string | null; citations: PublicCitation[]; redacted: boolean };
+export type ConversationDto = { id: string; title: string; projectId: string | null; rowVersion: number; messages: ChatMessage[]; hasMore: boolean; oldestSequence?: number };
+export const answerSchema = z.object({ messageId: z.uuid(), conversationId: z.uuid(), rowVersion: z.number().int().positive(), answer: z.string().max(12000), mode: assistantModeSchema.optional(), intent: z.string().nullable().optional(), citations: z.array(z.object({ ordinal: z.number().int().positive(), sourceType: z.enum(["DOCUMENT", "CONTACT", "WEB"]), projectId: z.uuid().nullable(), documentId: z.uuid().nullable(), chunkId: z.uuid().nullable(), contactId: z.uuid().nullable(), version: z.number().nullable(), page: z.number().nullable(), title: z.string(), snippet: z.string(), contentSha256: z.string(), sourceUrl: z.string().nullable(), retrievedAt: z.string().nullable().optional(), publishedAt: z.string().nullable().optional() })), retrievalMode: z.string() });
+export function safeSourceUrl(raw: string | null | undefined) {
+  try { const url = new URL(raw ?? ""); if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || /^(?:localhost|127\.|10\.|192\.168\.|169\.254\.|0\.|\[)/i.test(url.hostname) || /^172\.(?:1[6-9]|2\d|3[01])\./.test(url.hostname) || url.hostname.endsWith(".local") || !url.hostname.includes(".")) return null; return url.href; } catch { return null; }
+}
+export function publicCitation(citation: Citation): PublicCitation {
+  return { ...citation, sourceUrl: citation.sourceType === "WEB" ? safeSourceUrl(citation.webUrl) : citation.sourceType === "DOCUMENT" && citation.projectId && citation.chunkId ? `/projects/${citation.projectId}/documents/chunks/${citation.chunkId}` : null };
+}

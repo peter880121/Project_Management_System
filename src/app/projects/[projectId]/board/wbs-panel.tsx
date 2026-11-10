@@ -102,7 +102,7 @@ export function WbsPanel({ projectId, sourceTaskId, initialRequest = "", onAccep
       <label htmlFor="wbs-request" className="block text-sm font-medium">需求描述</label>
       <textarea id="wbs-request" minLength={10} maxLength={8000} required rows={4} value={request} onChange={(event) => setRequest(event.target.value)} className="w-full rounded-md border border-slate-300 bg-white p-3" placeholder="描述待拆解的软件交付需求、验收条件和约束……" />
       <label className="flex items-start gap-2 text-sm text-slate-700"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} required className="mt-1"/><span>我确认输入仅包含合成数据，不含真实患者信息。需求文本及检索命中的项目文档片段会发送给配置的模型服务。</span></label>
-      <button disabled={capabilities?.writable === false || busy || !confirmed} className="rounded-md bg-indigo-800 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-900 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "处理中…" : "生成 WBS 建议"}</button>
+      <button disabled={capabilities?.writable === false || busy || !confirmed} className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white hover:bg-teal-900 disabled:cursor-not-allowed disabled:opacity-50">{busy ? "处理中…" : "生成 WBS 建议"}</button>
     </fieldset></form>
     {generation.stopped && <button type="button" onClick={() => void recover()} className="mt-3 text-sm text-teal-800">核对已保存结果</button>}
     {error && <p role="alert" className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p>}

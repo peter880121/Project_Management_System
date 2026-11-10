@@ -22,6 +22,7 @@ const tx = {
   auditLog: { create: vi.fn(), findMany: vi.fn() },
   task: { findMany: vi.fn() },
   requirement: { findMany: vi.fn() },
+  requirementTaskLink: { findMany: vi.fn() },
   testCase: { findMany: vi.fn() },
 };
 const db = prisma as unknown as {
@@ -39,6 +40,7 @@ describe("compliance audit persistence", () => {
     tx.aiSuggestion.create.mockResolvedValue({ id: "suggestion" });
     tx.auditLog.findMany.mockResolvedValue([]);
     tx.requirement.findMany.mockResolvedValue([]);
+    tx.requirementTaskLink.findMany.mockResolvedValue([]);
     tx.testCase.findMany.mockResolvedValue([]);
     tx.auditLog.create.mockResolvedValue({ id: "summary-audit-id" });
     db.$transaction.mockImplementation((operation: (client: typeof tx) => unknown) => Promise.resolve(operation(tx)));

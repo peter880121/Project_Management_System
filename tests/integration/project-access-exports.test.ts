@@ -1,3 +1,4 @@
+import { businessToday } from "@/modules/tasks/plan";
 import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
@@ -97,7 +98,7 @@ describe.sequential("project isolation and compliance exports in isolated MySQL"
     expect(await hasProjectAccess({ id: owner, role: "MEMBER" }, projectId)).toBe(true);
     const before = await db.auditLog.count({ where: { projectId } });
     for (const operation of [
-      () => createTask({ projectId, title: "Unauthorized synthetic task", actorId: owner }),
+      () => createTask({ phase: "项目启动", estimateHours: 4, dueDate: "2026-12-31", projectId, title: "Unauthorized synthetic task", actorId: owner }),
       () => createProject({ name: "Unauthorized synthetic project", description: "Synthetic only", initializeStandardTasks: true }, { actorId: owner }),
       () => saveTraceability(projectId, { kind: "requirement", title: "Unauthorized synthetic requirement", content: "Synthetic only", status: "DRAFT" }, { actorId: owner }),
       () => saveTraceability(projectId, { kind: "testCase", requirementId: randomUUID(), title: "Unauthorized synthetic test", status: "NOT_RUN" }, { actorId: owner }),
@@ -110,6 +111,35 @@ describe.sequential("project isolation and compliance exports in isolated MySQL"
     expect((await db.aiSuggestion.findUniqueOrThrow({ where: { id: suggestion } })).status).toBe("PENDING");
     expect(await db.auditLog.count({ where: { projectId } })).toBe(before);
   });
+  it("rejects a stale rowVersion on ordinary TODO -> IN_PROGRESS PATCH without changing task or status audits", async () => {
+    await login(owner, "PM");
+    const observed = await db.task.findUniqueOrThrow({ where: { id: task } });
+
+    // Advance the real database version while keeping the transition itself valid.
+    await db.$transaction((tx) => tx.task.update({
+      where: { id: task },
+      data: { title: "Synthetic task updated after the client read" },
+    }));
+    const before = await db.task.findUniqueOrThrow({ where: { id: task } });
+    expect(before.status).toBe("TODO");
+    expect(observed.rowVersion).toBeGreaterThan(0);
+    expect(before.rowVersion).toBeGreaterThan(observed.rowVersion);
+    const auditWhere = { projectId, entityType: "Task", entityId: task, action: "TASK_STATUS_CHANGED" };
+    const auditsBefore = await db.auditLog.count({ where: auditWhere });
+
+    const response = await updateTaskRoute(new Request(`http://localhost/api/tasks/${task}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "IN_PROGRESS", expectedRowVersion: observed.rowVersion }),
+    }), { params: Promise.resolve({ taskId: task }) });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "任务版本已变化，请刷新后重试" });
+    const after = await db.task.findUniqueOrThrow({ where: { id: task } });
+    expect(after.status).toBe("TODO");
+    expect(after.rowVersion).toBe(before.rowVersion);
+    expect(await db.auditLog.count({ where: auditWhere })).toBe(auditsBefore);
+  });
   it("checks member assignment and completed status inside the business transaction", async () => {
     await expect(changeTaskStatus({ taskId: task, status: "IN_PROGRESS", actorId: member })).rejects.toMatchObject({ status: 403 });
     await assignTask({ taskId: task, assigneeId: member, actorId: owner });
@@ -117,7 +147,7 @@ describe.sequential("project isolation and compliance exports in isolated MySQL"
     const signaturePassword = "Synthetic-signature-123";
     const passwordHash = await hashPassword(signaturePassword);
     await db.$transaction(tx => tx.user.update({ where: { id: member }, data: { passwordHash } }));
-    await changeTaskStatus({ taskId: task, status: "DONE", actualHours: 2, actorId: member, signaturePassword, signatureReason: "确认开发完成" });
+    await changeTaskStatus({ taskId: task, status: "DONE", completedAt: businessToday(), actualHours: 2, actorId: member, signaturePassword, signatureReason: "确认开发完成" });
     const before = await db.auditLog.count({ where: { entityId: task } });
     await expect(changeTaskStatus({ taskId: task, status: "TODO", actorId: member })).rejects.toMatchObject({ status: 403 });
     expect((await db.task.findUniqueOrThrow({ where: { id: task } })).status).toBe("DONE");
@@ -213,7 +243,7 @@ describe.sequential("project isolation and compliance exports in isolated MySQL"
     sql("CREATE TRIGGER access_it_safe_error BEFORE INSERT ON AuditLog FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'synthetic-secret-db-detail';");
     try {
       for (const operation of [
-        () => createTaskRoute(request(`projects/${projectId}/tasks`, { title: "Synthetic rejected task" }, "POST"), { params: Promise.resolve({ projectId }) }),
+        () => createTaskRoute(request(`projects/${projectId}/tasks`, { title: "Synthetic rejected task", phase: "项目启动", estimateHours: 4, dueDate: "2026-12-31" }, "POST"), { params: Promise.resolve({ projectId }) }),
         () => updateTaskRoute(request(`tasks/${task}`, { assigneeId: member }), { params: Promise.resolve({ taskId: task }) }),
         () => updateTaskRoute(request(`tasks/${task}`, { status: "IN_PROGRESS" }), { params: Promise.resolve({ taskId: task }) }),
         () => reviewWbsRoute(request(`ai/wbs/${suggestion}`, { decision: "ACCEPTED" }), { params: Promise.resolve({ suggestionId: suggestion }) }),

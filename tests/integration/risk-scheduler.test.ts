@@ -1,3 +1,4 @@
+import { changeProjectLifecycle } from "@/modules/projects/lifecycle";
 import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -30,7 +31,8 @@ describe.sequential("durable risk scheduler and personal notifications", () => {
   }, 60000);
   beforeEach(async () => {
     await db.$transaction(async (tx) => {
-      await tx.riskScanSchedule.updateMany({ data: { enabled: false } }); await tx.riskScanJob.updateMany({ where: { status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "SKIPPED" } });
+      const writableIds = (await tx.project.findMany({ where: { status: { in: ["PLANNING", "ACTIVE", "COMPLETED"] } }, select: { id: true } })).map(project => project.id);
+      await tx.riskScanSchedule.updateMany({ where: { projectId: { in: writableIds } }, data: { enabled: false } }); await tx.riskScanJob.updateMany({ where: { projectId: { in: writableIds }, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "SKIPPED" } });
       actorId = (await tx.user.create({ data: { email: `${randomUUID()}@medpm.local`, name: "Synthetic scheduler PM", role: "PM", status: "ACTIVE" } })).id;
       ownerId = (await tx.user.create({ data: { email: `${randomUUID()}@medpm.local`, name: "Synthetic owner PM", role: "PM", status: "ACTIVE" } })).id;
       outsiderId = (await tx.user.create({ data: { email: `${randomUUID()}@medpm.local`, name: "Synthetic unrelated PM", role: "PM", status: "ACTIVE" } })).id;
@@ -130,7 +132,7 @@ describe.sequential("durable risk scheduler and personal notifications", () => {
     await runRiskWorkerTick(); expect((await db.riskScanSchedule.findUniqueOrThrow({ where: { projectId } })).enabled).toBe(false);
     expect((await db.riskScanJob.findFirstOrThrow({ where: { projectId } })).errorCode).toBe("RISK_AUTHORIZATION_REVOKED");
     await configureRiskSchedule(projectId, config(true, 2), { actorId: ownerId });
-    await db.$transaction((tx) => tx.project.update({ where: { id: projectId }, data: { status: "ON_HOLD" } }));
+    await changeProjectLifecycle(projectId, "pause", { expectedRowVersion: (await db.project.findUniqueOrThrow({ where: { id: projectId } })).rowVersion, requestKey: randomUUID(), reason: "Synthetic customer budget pause for scheduler test" }, { actorId: ownerId });
     await runRiskWorkerTick(); expect(await db.aiSuggestion.count({ where: { projectId } })).toBe(0);
   });
   it("rolls back results and notifications on audit failure, bounds retries and supports explicit retry", async () => {

@@ -43,7 +43,7 @@ export function useAiGeneration<T>() {
         else router.refresh();
         window.dispatchEvent(new Event("project-access-invalidated"));
       }
-      if (error instanceof AiStreamError && ["PROJECT_ARCHIVED", "PROJECT_IN_ACCEPTANCE"].includes(error.code)) { setPreview(""); window.dispatchEvent(new CustomEvent("project-access-invalidated", { detail: { code: error.code } })); }
+      if (error instanceof AiStreamError && ["PROJECT_ARCHIVED", "PROJECT_FROZEN", "PROJECT_IN_ACCEPTANCE"].includes(error.code)) { setPreview(""); window.dispatchEvent(new CustomEvent("project-access-invalidated", { detail: { code: error.code } })); }
       throw error;
     } finally { writer.stop(); if (mounted.current && current === version.current) setRunning(false); }
   }, [cancel, notify, router]);

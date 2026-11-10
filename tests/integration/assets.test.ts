@@ -1,3 +1,4 @@
+import { businessToday } from "@/modules/tasks/plan";
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -43,7 +44,7 @@ describe.sequential("delivery assets and index pipeline with real MySQL transact
     const row = await db.$transaction(tx => tx.task.create({ data: { projectId, title: "Historical compatibility" } })); expect(row.requiresDeliverable).toBe(false);
   }, 30000);
   it("blocks DONE before password verification if no approved evidence exists", async () => {
-    await expect(changeTaskStatus({ taskId, status: "DONE", actualHours: 2, signaturePassword: "wrong", signatureReason: "确认任务已完成", actorId: pmId })).rejects.toMatchObject({ status: 400, message: "请先上传并审批通过的交付物" });
+    await expect(changeTaskStatus({ taskId, status: "DONE", completedAt: businessToday(), actualHours: 2, signaturePassword: "wrong", signatureReason: "确认任务已完成", actorId: pmId })).rejects.toMatchObject({ status: 400, message: "请先上传并审批通过的交付物" });
     expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("IN_PROGRESS");
     expect(await db.auditLog.count({ where: { entityId: taskId, action: "TASK_SIGNED_AND_COMPLETED" } })).toBe(0);
   });
@@ -53,7 +54,7 @@ describe.sequential("delivery assets and index pipeline with real MySQL transact
     expect(await db.deliverable.count({ where: { projectId } })).toBe(0); expect((await db.document.findUniqueOrThrow({ where: { id: document.id } })).documentType).toBe("DOCUMENT");
   });
   it("approval atomically queues parsing, rejects replay and freezes the approved version", async () => {
-    const d = await draft(); await mutateDeliverable(d.id, "submit", { rowVersion: 1 }, actor());
+    const d = await draft(); await mutateDeliverable(d.id, "submit", { rowVersion: 1, cloudProcessingConfirmed: true }, actor());
     await mutateDeliverable(d.id, "review", { rowVersion: 2, decision: "APPROVED", reviewComment: "Synthetic review" }, { actorId: qaId });
     const before = await db.deliverable.findUniqueOrThrow({ where: { id: d.id }, include: { document: true } });
     expect(before.status).toBe("APPROVED"); expect(before.document.parseStatus).toBe("QUEUED"); expect(await db.documentParseJob.count({ where: { documentId: d.documentId } })).toBe(1);
@@ -64,12 +65,12 @@ describe.sequential("delivery assets and index pipeline with real MySQL transact
     expect(await db.deliverable.findUnique({ where: { id: d.id }, include: { document: true } })).toEqual(before);
   });
   it("rolls back approval, parse queue and review metadata when audit fails", async () => {
-    const d = await draft(); await mutateDeliverable(d.id, "submit", { rowVersion: 1 }, actor()); state.failAudit = true;
+    const d = await draft(); await mutateDeliverable(d.id, "submit", { rowVersion: 1, cloudProcessingConfirmed: true }, actor()); state.failAudit = true;
     await expect(mutateDeliverable(d.id, "review", { rowVersion: 2, decision: "APPROVED" }, { actorId: qaId })).rejects.toThrow();
     expect((await db.deliverable.findUniqueOrThrow({ where: { id: d.id } })).status).toBe("PENDING_REVIEW"); expect(await db.documentParseJob.count({ where: { documentId: d.documentId } })).toBe(0);
   });
   it("rejects cross-project review, self-review after role change, and forged task configuration", async () => {
-    const d = await draft(); await mutateDeliverable(d.id, "submit", { rowVersion: 1 }, actor());
+    const d = await draft(); await mutateDeliverable(d.id, "submit", { rowVersion: 1, cloudProcessingConfirmed: true }, actor());
     state.user = { id: outsiderId, role: "QA" };
     const req = () => new Request(`http://localhost/api/deliverables/${d.id}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: "APPROVED", rowVersion: 2 }) });
     expect((await reviewRoute(req(), { params: Promise.resolve({ deliverableId: d.id, operation: "review" }) })).status).toBe(403);

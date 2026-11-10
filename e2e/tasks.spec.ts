@@ -39,6 +39,8 @@ test("PM creates a task, changes its status, and reviews requirement and audit h
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
   await page.getByRole("link", { name: "创建任务", exact: true }).click();
   await page.getByLabel("任务标题").fill(title);
+  await page.getByLabel("所属阶段", { exact: true }).selectOption("项目启动");
+  await page.getByLabel("预计工时", { exact: true }).fill("4");
   await page.getByLabel("关联需求").selectOption(requirementId);
   await page.getByRole("button", { name: "创建任务" }).click();
   const task = page.getByRole("link", { name: title });

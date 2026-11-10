@@ -1,3 +1,4 @@
+import { businessToday } from "@/modules/tasks/plan";
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
@@ -16,7 +17,7 @@ connected.client = db.$extends({ query: { auditLog: { create: async ({ args, que
 } } } });
 let actorId: string; let taskId: string; let memberId: string;
 const password = `Synthetic-${randomUUID()}`;
-const sign = () => ({ taskId, actorId, status: "DONE" as const, actualHours: 2, signaturePassword: password, signatureReason: "确认测试通过", ip: "192.0.2.1", userAgent: "Synthetic signature integration" });
+const sign = () => ({ taskId, actorId, status: "DONE" as const, completedAt: businessToday(), actualHours: 2, signaturePassword: password, signatureReason: "确认测试通过", ip: "192.0.2.1", userAgent: "Synthetic signature integration" });
 describe.sequential("task signatures in real MySQL transactions", () => {
   beforeAll(async () => {
     const source = new URL(process.env.DATABASE_URL || "");

@@ -1,5 +1,4 @@
-import { planningDate } from "@/modules/planning/schemas";
-import { meetingTaskSourceSchema } from "@/modules/ai/meetings/types";
+import { createTaskSchema } from "@/modules/tasks/create-schema";
 import { businessErrorResponse } from "@/modules/audit/errors";
 import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
@@ -12,15 +11,6 @@ import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-const createTaskSchema = z.object({
-  requiresDeliverable: z.boolean().optional(),
-  assigneeId: z.uuid().optional(),
-  dueDate: planningDate.nullable().optional(),
-  meetingSource: meetingTaskSourceSchema.optional(),
-  title: z.string().trim().min(1).max(191),
-  description: z.string().trim().max(10_000).optional(),
-  requirementId: z.uuid().optional(),
-}).strict();
 
 async function GETHandler(_request: Request, context: { params: Promise<{ projectId: string }> }) {
   const user = await getCurrentUser();

@@ -29,42 +29,46 @@ test("consecutive schedule saves use each task's dates, hours, dependencies and 
     task.scheduleVersion++;
     await route.fulfill({ json: { data: { id: task.id, scheduleVersion: task.scheduleVersion } } });
   });
-  await page.goto(`/projects/${projectId}/planning`);
-  await page.getByRole("button", { name: "表格视图", exact: true }).click();
-  const first = page.locator("article").filter({ has: page.getByRole("link", { name: tasks[0].title, exact: true }) });
-  const second = page.locator("article").filter({ has: page.getByRole("link", { name: tasks[1].title, exact: true }) });
-  await first.getByRole("button", { name: "保存排期", exact: true }).click();
+
+  const detail = (task: typeof tasks[number]) => ({ ...task, description: "所属阶段：项目启动", estimateHours: task.estimateHours == null ? null : String(task.estimateHours), actualHours: null, assigneeId: null, requirement: null, audits: [], dependencies: [] });
+  await page.route(`**/api/projects/${projectId}/tasks`, route => route.fulfill({ json: { data: tasks.map(detail) } }));
+  await page.route("**/api/tasks/*", route => { const task = tasks.find(row => route.request().url().endsWith(row.id)); return task ? route.fulfill({ json: { data: detail(task) } }) : route.continue(); });
+  await page.goto(`/projects/${projectId}/board`);
+  await page.getByRole("link", { name: tasks[0].title, exact: true }).click();
+  let drawer = page.getByRole("dialog", { name: "任务详情", exact: true });
+  await drawer.getByText("编辑计划安排", { exact: true }).click();
+  await drawer.getByRole("button", { name: "保存任务计划", exact: true }).click();
   await expect.poll(() => saved.length).toBe(1);
-  await expect(second.getByRole("button", { name: "保存排期", exact: true })).toBeEnabled();
-  await second.getByLabel(`开始日期 ${tasks[1].title}`, { exact: true }).fill("2026-10-16");
-  await second.getByLabel(`截止日期 ${tasks[1].title}`, { exact: true }).fill("2026-10-21");
-  await second.getByLabel(`预计工时 ${tasks[1].title}`, { exact: true }).fill("8");
-  await second.getByRole("button", { name: "保存排期", exact: true }).click();
+  await expect(drawer.getByRole("button", { name: "关闭任务详情", exact: true })).toBeEnabled();
+  await drawer.getByRole("button", { name: "关闭任务详情", exact: true }).click();
+  await page.getByRole("link", { name: tasks[1].title, exact: true }).click();
+  drawer = page.getByRole("dialog", { name: "任务详情", exact: true });
+  await drawer.getByText("编辑计划安排", { exact: true }).click();
+  await drawer.getByLabel("计划开始日期", { exact: true }).fill("2026-10-16");
+  await drawer.getByLabel("计划完成日期", { exact: true }).fill("2026-10-21");
+  await drawer.getByLabel("计划预计工时", { exact: true }).fill("8");
+  await drawer.getByRole("button", { name: "保存任务计划", exact: true }).click();
   await expect.poll(() => saved.length).toBe(2);
   expect(saved[1]).toMatchObject({ expectedVersion: 0, plannedStartDate: "2026-10-16", dueDate: "2026-10-21", estimateHours: 8, dependencyIds: [] });
-  await page.screenshot({ path: "test-results/pm-planning-desktop.png", fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: "test-results/pm-planning-mobile.png", fullPage: true });
 });
 
-test("project creation guides members, planning and board in sequence", async ({ page }) => {
+test("project creation guides members directly to task management", async ({ page }) => {
   await page.route("**/api/projects", route => route.request().method() === "POST" ? route.fulfill({ status: 201, json: { data: { id: projectId } } }) : route.continue());
   await page.goto("/projects");
   await expect(page.getByRole("region", { name: "项目状态概览", exact: true })).toBeVisible();
   await expect(page.getByLabel("项目名称", { exact: true })).toHaveCount(0);
-  await page.screenshot({ path: "test-results/pm-projects-desktop.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/pm-projects-desktop.png", fullPage: true });
   await page.getByRole("link", { name: "创建项目", exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/new$/);
   await page.getByLabel("项目名称", { exact: true }).fill("Synthetic isolated UI project");
   await page.getByLabel("项目描述", { exact: true }).fill("Synthetic UI request; persistence mocked");
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/members\\?onboarding=1$`));
-  await expect(page.getByRole("region", { name: "新项目引导" })).toContainText("加入项目不会自动分配任务");
-  await page.screenshot({ path: "test-results/ia-members-onboarding.png", fullPage: true });
-  await page.getByRole("link", { name: "下一步：分配负责人和排期 →", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/planning\\?onboarding=1$`));
-  await page.getByRole("link", { name: "进入看板执行 →", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/board$`));
+  await expect(page.getByRole("region", { name: "新项目引导" })).toContainText("直接进入任务管理");
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/ia-members-onboarding.png", fullPage: true });
+  await page.getByRole("link", { name: "完成人员配置，进入任务管理 →", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/board\\?onboarding=1$`));
+  await expect(page.getByRole("region", { name: "新项目引导" })).toContainText("第 2 步 / 共 2 步");
 });
 
 test("slow or unavailable phase metadata never blocks planning and never issues per-task requests", async ({ page }) => {
@@ -79,8 +83,8 @@ test("slow or unavailable phase metadata never blocks planning and never issues 
     await expect(page.locator(`.bar-wrapper[data-id="${task.id}"]`)).toBeVisible();
     await expect(page.getByLabel("甘特任务列表")).toContainText("[未分组]");
   } finally { release(); }
-  await expect(page.getByLabel("操作反馈").getByRole("alert")).toContainText("阶段信息暂时无法读取");
-  await expect(page.getByRole("button", { name: "刷新排期", exact: true })).toBeEnabled();
+  await expect(page.getByRole("status").filter({ hasText: "阶段信息暂时无法读取" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "刷新甘特图", exact: true })).toBeEnabled();
   expect(requests).toBe(1);
 });
 
@@ -92,15 +96,18 @@ test("task creation is separate and returns to the status board with the new tas
     return route.fulfill({ json: { data: created ? [task] : [] } });
   });
   await page.goto(`/projects/${projectId}/board`);
-  await expect(page.getByRole("region", { name: "任务状态概览", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "任务状态概览", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "任务看板", exact: true })).toBeVisible();
   await expect(page.getByLabel("任务标题", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "WBS 分解 Agent", exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "创建任务", exact: true }).click();
   await page.getByLabel("任务标题", { exact: true }).fill(task.title);
+  await page.getByLabel("所属阶段", { exact: true }).selectOption("项目启动");
+  await page.getByLabel("预计工时", { exact: true }).fill("4");
   await page.getByRole("button", { name: "创建任务", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "创建成功" })).toBeVisible();
   await expect(page.getByRole("link", { name: task.title, exact: true })).toBeVisible();
-  await page.screenshot({ path: "test-results/pm-task-board.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/pm-task-board.png", fullPage: true });
 });
 
 test("failed WBS generation preserves the request and separates failure from retrieval fallback", async ({ page }) => {
@@ -115,5 +122,5 @@ test("failed WBS generation preserves the request and separates failure from ret
   await expect(request).toHaveValue("Synthetic login delivery acceptance with validation and audit evidence");
   await expect(page.getByRole("link", { name: "手动创建任务", exact: true })).toHaveAttribute("href", `/projects/${projectId}/tasks/new`);
   await expect(page.getByText("部分证据通过关键词检索获得，请人工核对来源。", { exact: true })).toBeVisible();
-  await page.screenshot({ path: "test-results/pm-wbs-failure.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/pm-wbs-failure.png", fullPage: true });
 });

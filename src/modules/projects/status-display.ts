@@ -1,4 +1,5 @@
 export const projectStatuses = {
+  CANCELLED: { label: "已取消", color: "border-red-200 bg-red-50 text-red-800" },
   PENDING_ACCEPTANCE: { label: "待验收", color: "border-amber-200 bg-amber-50 text-amber-800" },
   ARCHIVED: { label: "已归档", color: "border-slate-300 bg-slate-100 text-slate-700" },
   PLANNING: { label: "规划中", color: "border-sky-200 bg-sky-50 text-sky-800" },

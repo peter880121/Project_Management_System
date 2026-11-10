@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { AuthenticatedUser } from "@/modules/auth/rbac";
 export const dashboardRoles = ["ADMIN", "PMO", "PM"] as const;
-export const operationalStatuses = ["PLANNING", "ACTIVE", "ON_HOLD"] as const;
+export const operationalStatuses = ["PLANNING", "ACTIVE"] as const;
 export function dashboardScope(actor: AuthenticatedUser, projectId?: string): Prisma.ProjectWhereInput {
   if (!dashboardRoles.some(role => role === actor.role)) return { id: { in: [] } };
   const access = actor.role === "PM" ? { OR: [{ ownerId: actor.id }, { members: { some: { userId: actor.id, active: true } } }] } : {};

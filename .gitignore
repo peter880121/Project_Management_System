@@ -3,8 +3,10 @@ node_modules/
 out/
 coverage/
 *.log
+# Keep local credentials and environment backups out of Git at any depth.
 .env
 .env.*
+# Commit only the shared configuration template.
 !.env.example
 *.tsbuildinfo
 prisma/*.db
@@ -16,3 +18,12 @@ __pycache__/
 
 test-results/
 playwright-report/
+/.pnpm-store/
+/output/task-plan-actual/
+/.maintenance/
+/output/weekly-reports/
+/output/environment/
+# Generated local evidence and unrelated local tools.
+/output/half-year-simulation/
+/output/audit-remediation/
+/.qqbot-tools/

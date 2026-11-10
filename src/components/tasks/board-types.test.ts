@@ -17,5 +17,5 @@ it("preserves member ownership and completed-task restrictions in UI controls", 
   expect(canUpdateTask(task, "QA", "member")).toBe(false);
   expect(canUpdateTask(task, "MEMBER", "member")).toBe(true);
   expect(taskStatusOptions("DONE", "MEMBER")).toEqual([]);
-  expect(taskStatusOptions("DONE", "PM")).toEqual(["IN_PROGRESS"]);
+  expect(taskStatusOptions("DONE", "PM")).toEqual(["IN_PROGRESS", "TODO"]);
 });

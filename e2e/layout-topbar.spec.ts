@@ -12,7 +12,7 @@ const beaconPath = `/projects/${beaconId}/board`;
 let task: { id: string; title: string };
 let sourceChunk: { id: string; projectId: string };
 let privateNotification: { id: string };
-test.use({ channel: process.env.ACCEPTANCE_EDGE === "1" ? "msedge" : undefined });
+test.use({ channel: process.env.ACCEPTANCE_EDGE === "1" ? "msedge" : undefined, trace: "off" });
 test.setTimeout(90_000);
 test.beforeAll(async () => {
   const db = new PrismaClient();
@@ -23,7 +23,7 @@ test.beforeAll(async () => {
     await db.$transaction(async tx => {
       const text = "Synthetic breadcrumb fixture; no patient data.";
       const digest = createHash("sha256").update(text).digest("hex");
-      const document = await tx.document.create({ data: { projectId: atlasId, filename: "synthetic-breadcrumb.pdf", minioKey: `synthetic/layout/${randomUUID()}.pdf`, mediaType: "application/pdf", parseStatus: "SUCCEEDED", parsedVersion: 1, parseVersion: 1 } });
+      const document = await tx.document.create({ data: { projectId: atlasId, filename: "synthetic-breadcrumb.pdf", minioKey: `synthetic/layout/${randomUUID()}.pdf`, mediaType: "application/pdf", storageStatus: "AVAILABLE", chunkedVersion: 1, parseStatus: "SUCCEEDED", parsedVersion: 1, parseVersion: 1 } });
       const job = await tx.documentParseJob.create({ data: { documentId: document.id, version: 1, requestedById: "00000000-0000-4000-8000-000000000002", requestKey: randomUUID(), status: "SUCCEEDED", modelVersion: "synthetic-fixture", sourceSha256: digest, sourceFilename: document.filename, sourceSize: text.length, deadlineAt: new Date(), markdown: text } });
       sourceChunk = await tx.documentChunk.create({ data: { documentId: document.id, projectId: atlasId, parseJobId: job.id, version: 1, ordinal: 0, text, textSha256: digest, page: 1, startOffset: 0, endOffset: text.length, embeddingModel: "synthetic-fixture", vectorStatus: "FAILED" } });
       const suggestion = await tx.aiSuggestion.create({ data: { projectId: atlasId, type: "RISK", input: { source: "synthetic-layout-fixture" }, output: { taskId: task.id, taskTitle: task.title, evidence: ["Synthetic risk evidence"] } } });
@@ -40,17 +40,18 @@ test("home has no breadcrumbs; project list and board show server labels and cor
   await page.goto("/");
   await expect(page.getByRole("navigation", { name: "面包屑", exact: true })).toHaveCount(0);
   await expect(page.getByRole("banner", { name: "顶部栏" })).toHaveCSS("height", "56px");
-  await page.screenshot({ path: "test-results/layout-step2a-home.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2a-home.png", fullPage: true });
   await page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { name: "项目", exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/, { timeout: 20000 });
   const crumbs = page.getByRole("navigation", { name: "面包屑", exact: true });
-  await expect(crumbs).toHaveText("项目");
-  await page.screenshot({ path: "test-results/layout-step2a-projects.png", fullPage: true });
+  await expect(crumbs).toHaveText("项目", { timeout: 20000 });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2a-projects.png", fullPage: true });
   await page.getByRole("link", { name: "Atlas Release Readiness", exact: true }).click();
   await expect(crumbs.locator("li")).toHaveText(["项目", "Atlas Release Readiness", "看板"]);
   await expect(crumbs.getByRole("link")).toHaveCount(1);
   await expect(crumbs.getByRole("link", { name: "项目", exact: true })).toHaveAttribute("href", "/projects");
   await expect(crumbs.locator('[aria-current="page"]')).toHaveText("看板");
-  await page.screenshot({ path: "test-results/layout-step2a-board.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2a-board.png", fullPage: true });
   await crumbs.getByRole("link", { name: "项目", exact: true }).click();
   await expect(page).toHaveURL(/\/projects$/);
   await expect(crumbs).toHaveText("项目");
@@ -62,7 +63,7 @@ test("task detail reuses its project association and links back to its board", a
   await expect(crumbs.locator("li")).toHaveText(["项目", "Atlas Release Readiness", "看板", task.title]);
   await expect(crumbs.getByRole("link", { name: "看板", exact: true })).toHaveAttribute("href", atlasPath);
   await expect(crumbs.getByRole("link", { name: "Atlas Release Readiness", exact: true })).toHaveCount(0);
-  await page.screenshot({ path: "test-results/layout-step2a-task.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2a-task.png", fullPage: true });
   await crumbs.getByRole("link", { name: "看板", exact: true }).click();
   await expect(page).toHaveURL(atlasPath);
   await expect(crumbs.locator("li")).toHaveText(["项目", "Atlas Release Readiness", "看板"]);
@@ -82,7 +83,7 @@ test("avatar menu supports keyboard navigation, escape, outside click and Tab ex
   await expect(profile).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(logout).toBeFocused();
-  await page.screenshot({ path: "test-results/layout-step2a-menu-keyboard.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2a-menu-keyboard.png", fullPage: true });
   await page.keyboard.press("ArrowUp");
   await expect(profile).toBeFocused();
   await page.keyboard.press("Escape");
@@ -129,7 +130,7 @@ test("client navigation Atlas to Beacon never carries Atlas breadcrumbs into the
   expect(samples.some(sample => sample.path === beaconPath)).toBe(true);
   expect(samples.filter(sample => sample.path !== atlasPath).every(sample => !sample.text.includes("Atlas Release Readiness"))).toBe(true);
   await writeFile("test-results/layout-step2a-switch-evidence.json", JSON.stringify({ route: [atlasPath, "/projects", beaconPath], samples }, null, 2));
-  await page.screenshot({ path: "test-results/layout-step2a-board-beacon.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2a-board-beacon.png", fullPage: true });
   await page.goBack();
   await expect(crumbs).toHaveText("项目");
   await page.goBack();
@@ -146,10 +147,10 @@ test("narrow layout keeps the topbar visible without covering content and suppor
   expect(headerBox?.height).toBe(56);
   expect(contentBox!.y).toBeGreaterThanOrEqual(56);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: "test-results/layout-step2a-mobile.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2a-mobile.png", fullPage: true });
   await page.getByRole("button", { name: "用户菜单", exact: true }).click();
   await expect(page.getByRole("menu", { name: "用户菜单", exact: true })).toBeVisible();
-  await page.screenshot({ path: "test-results/layout-step2a-mobile-menu.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2a-mobile-menu.png", fullPage: true });
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "打开导航", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "全局侧边栏", exact: true })).toBeVisible();
@@ -159,14 +160,14 @@ test("narrow layout keeps the topbar visible without covering content and suppor
 
 test("batch B project subpages reuse readable project labels and keep project names unlinked", async ({ page, context, baseURL }) => {
   const crumbs = page.getByRole("navigation", { name: "面包屑", exact: true });
-  for (const [segment, label] of [["documents", "文档"], ["traceability", "需求追溯"], ["planning", "排期"], ["members", "成员"], ["wbs", "智能 WBS 分解"], ["risks", "风险预警"], ["exports", "合规导出"]]) {
+  for (const [segment, label] of [["documents", "文档"], ["traceability", "需求追溯"], ["planning", "甘特图"], ["members", "成员"], ["wbs", "智能 WBS 分解"], ["risks", "风险预警"], ["exports", "合规导出"]]) {
     if (segment === "exports") await context.addCookies([{ name: "medpm_session", value: createSessionToken("00000000-0000-4000-8000-000000000001", Date.now() + 3_600_000), url: baseURL! }]);
     await page.goto(`/projects/${atlasId}/${segment}`);
-    await expect(crumbs.locator("li")).toHaveText(["项目", "Atlas Release Readiness", label]);
+    await expect(crumbs.locator("li")).toHaveText(["项目", "Atlas Release Readiness", label], { timeout: 20000 });
     await expect(crumbs.getByRole("link")).toHaveCount(1);
     await expect(crumbs.getByRole("link", { name: "项目", exact: true })).toHaveAttribute("href", "/projects");
     await expect(crumbs.locator('[aria-current="page"]')).toHaveText(label);
-    if (segment === "traceability") await page.screenshot({ path: "test-results/layout-step2b-project.png", fullPage: true });
+    if (segment === "traceability") if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2b-project.png", fullPage: true });
   }
 });
 
@@ -195,7 +196,7 @@ test("batch B creation pages retain their project list and board ancestors", asy
   await page.goto(`/projects/${atlasId}/tasks/new`);
   await expect(crumbs.locator("li")).toHaveText(["项目", "Atlas Release Readiness", "看板", "创建任务"]);
   await expect(crumbs.getByRole("link")).toHaveCount(2);
-  await page.screenshot({ path: "test-results/layout-step2b-task.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2b-task.png", fullPage: true });
   await crumbs.getByRole("link", { name: "看板", exact: true }).click();
   await expect(page).toHaveURL(atlasPath);
 });
@@ -207,7 +208,7 @@ test("batch B global pages and audit detail use static breadcrumbs; profile uses
     await page.goto(path);
     await expect(crumbs.locator("li")).toHaveText([label]);
     await expect(crumbs.getByRole("link")).toHaveCount(0);
-    if (path === "/audit") await page.screenshot({ path: "test-results/layout-step2b-global.png", fullPage: true });
+    if (path === "/audit") if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2b-global.png", fullPage: true });
   }
   const db = new PrismaClient();
   let audit: { id: string };
@@ -236,12 +237,12 @@ test("batch B private notifications show a static parent and clean it on navigat
   const crumbs = page.getByRole("navigation", { name: "面包屑", exact: true });
   await expect(crumbs.locator("li")).toHaveText(["我的风险通知"]);
   await expect(page.getByRole("region", { name: "个人风险通知", exact: true })).toBeVisible();
-  await page.screenshot({ path: "test-results/layout-step2b-notifications.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2b-notifications.png", fullPage: true });
   await page.goto(`/notifications/${notification.id}`);
   await expect(crumbs.locator("li")).toHaveText(["我的风险通知", "风险通知详情"]);
   await expect(crumbs.getByRole("link")).toHaveCount(1);
   await expect(crumbs.getByRole("link", { name: "我的风险通知", exact: true })).toHaveAttribute("href", "/notifications");
-  await page.screenshot({ path: "test-results/layout-step2b-notification-detail.png", fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: "test-results/layout-step2b-notification-detail.png", fullPage: true });
   await crumbs.getByRole("link", { name: "我的风险通知", exact: true }).click();
   await expect(crumbs.locator("li")).toHaveText(["我的风险通知"]);
   await page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("link", { name: "项目", exact: true }).click();

@@ -1,20 +1,22 @@
+import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import Home from "./page";
+import { ToastProvider } from "@/components/toast-provider";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 const mocks = vi.hoisted(() => ({ user: vi.fn() }));
 vi.mock("@/modules/auth/session", () => ({ getCurrentUser: mocks.user }));
 
 describe("home Agent entry points", () => {
-  it("links to implemented workflows", async () => {
-    mocks.user.mockResolvedValue({ id: "verified-user", role: "PM" });
-    const html = renderToStaticMarkup(await Home());
-    expect(html).not.toContain("产品导航");
-    expect(html).toContain('href="/projects"');
-    expect(html).toContain('href="/audit"');
-    expect(html).toContain("ADMIN / QA");
-    expect(html).not.toContain("待接入");
-    expect(html).toContain("生成合规摘要");
-    expect(html).toContain("扫描项目风险");
+  it.each(["ADMIN", "PM", "QA", "MEMBER", "PMO"])("renders the internal chat homepage for %s", async role => {
+    mocks.user.mockResolvedValue({ id: "verified-user", role });
+    const html = renderToStaticMarkup(createElement(ToastProvider, null, await Home()));
+    expect(html).toContain("MedPM 智能助手");
+    expect(html).toContain("内部知识优先");
+    expect(html).toContain("向智能助手提问");
+    expect(html).toContain("发送问题");
+    expect(html).toContain("仅使用合成数据");
+    expect(html).not.toContain('href="/register"');
   });
   it("renders only the product landing for guests", async () => {
     mocks.user.mockResolvedValue(null);

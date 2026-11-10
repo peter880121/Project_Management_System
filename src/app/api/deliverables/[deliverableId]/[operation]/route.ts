@@ -4,6 +4,7 @@ import { createDeliverable, mutateDeliverable, queueAssetParse, lockAssetActor }
 import { deliverableCreateSchema, submitSchema, reviewSchema, syncSchema, AssetError } from "@/modules/assets/validation";
 import { recordAudit } from "@/modules/audit/service";
 import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
+import { documentParser } from "@/modules/documents/local-parser";
 export const dynamic = "force-dynamic";
 export async function POST(request: Request, { params }: { params: Promise<{ deliverableId: string; operation: string }> }) {
   const { deliverableId: id, operation } = await params;
@@ -12,14 +13,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ del
     const actor = { actorId: user.id, ...getAuditRequestMetadata(request) }; const body = await request.json();
     if (operation === "versions") return Response.json({ data: await createDeliverable(projectId, deliverableCreateSchema.parse(body), actor, id) }, { status: 201 });
     if (operation === "index") {
-      syncSchema.parse(body);
+      const input = syncSchema.parse(body);
       await prisma.$transaction(async tx => {
         await lockAssetActor(tx, projectId, actor, ["PM", "QA", "ADMIN"]);
-        const row = await tx.deliverable.findUniqueOrThrow({ where: { id } });
+        const row = await tx.deliverable.findUniqueOrThrow({ where: { id }, include: { document: { select: { filename: true } } } });
         if (row.status !== "APPROVED") throw new AssetError("只有已批准交付物可同步", 409);
+        const cloud = documentParser(row.document.filename).cloud;
+        if (cloud && input.cloudProcessingConfirmed !== true) throw new AssetError("请确认 PDF 云端处理", 400);
         await queueAssetParse(tx, row.documentId, actor, projectId);
         await tx.syncFailure.deleteMany({ where: { entityId: row.documentId, target: "DOCUMENT_CHUNK_BUILD" } });
-        await recordAudit(tx, { ...actor, projectId, action: "ASSET_INDEX_REQUESTED", entityType: "Deliverable", entityId: id, after: { documentId: row.documentId, cloudProcessingConfirmed: true } });
+        await recordAudit(tx, { ...actor, projectId, action: "ASSET_INDEX_REQUESTED", entityType: "Deliverable", entityId: id, after: { documentId: row.documentId, cloudProcessingConfirmed: cloud } });
       });
       return Response.json({ data: { queued: true } });
     }

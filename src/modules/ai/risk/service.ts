@@ -1,3 +1,4 @@
+import { liveRiskTaskClause } from "./visibility";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -52,13 +53,13 @@ export async function scanProjectRisks(tx: Prisma.TransactionClient, input: { pr
     const batchId = randomUUID();
     const weekStart = utcWeekStart(input.now); const snapshot = await loadPlanningSnapshot(tx, input.projectId, weekStart);
     const byId = new Map(snapshot.tasks.map((task) => [task.id, task]));
-    const tasks: RiskTask[] = snapshot.tasks.map((task) => ({ ...task, dependencies: task.dependencies.flatMap((edge) => {
+    const tasks: RiskTask[] = snapshot.tasks.filter(task => task.status !== "CANCELLED").map((task) => ({ ...task, dependencies: task.dependencies.flatMap((edge) => {
       const dependency = byId.get(edge.dependsOnTaskId); return dependency ? [{ id: dependency.id, title: dependency.title, status: dependency.status, dueDate: dependency.dueDate }] : [];
     }) }));
     const findings = analyzeProjectRisks(tasks, input.now);
     const loads = calculateWeeklyLoad(snapshot.loadTasks.map((row) => ({ ...row, estimateHours: row.estimateHours === null ? null : Number(row.estimateHours) })), snapshot.members, snapshot.capacities.map((row) => ({ ...row, hours: row.hours === null ? null : Number(row.hours) })), weekStart);
     for (const task of snapshot.tasks) {
-      if (task.status === "DONE" || !task.assigneeId) continue;
+      if (["DONE", "CANCELLED"].includes(task.status) || !task.assigneeId) continue;
       const load = loads.find((row) => row.userId === task.assigneeId); if (!load) continue;
       const evidence: string[] = [];
       if (load.overloaded && load.taskIds.includes(task.id)) evidence.push(`${load.name} 在 ${weekStart.toISOString().slice(0, 10)} 起的一周跨项目计划工时 ${load.plannedHours} 小时，超过已配置容量 ${load.capacityHours} 小时（按日历天均摊，${load.projectIds.length} 个项目）。`);
@@ -90,8 +91,9 @@ export async function scanProjectRisks(tx: Prisma.TransactionClient, input: { pr
 }
 
 export async function getPendingRiskWarnings(projectId: string): Promise<RiskSuggestion[]> {
+  const live = await prisma.$queryRaw<{ id: string }[]>`SELECT s.id FROM AiSuggestion s WHERE s.projectId=${projectId} AND s.type='RISK' AND s.status='PENDING' AND ${liveRiskTaskClause} ORDER BY s.createdAt DESC,s.id DESC LIMIT 100`;
   const [rows, tasks] = await Promise.all([prisma.aiSuggestion.findMany({
-    where: { projectId, type: "RISK", status: "PENDING" },
+    where: { projectId, type: "RISK", status: "PENDING", id: { in: live.map(row => row.id) } },
     select: { id: true, output: true, createdAt: true },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 100,

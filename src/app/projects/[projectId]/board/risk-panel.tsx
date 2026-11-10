@@ -60,7 +60,7 @@ export function RiskPanel({ projectId }: { projectId: string }) {
   }
 
   return <section id="risk-warnings" className="mt-8 rounded-xl border border-amber-200 bg-amber-50/60 p-5" aria-label="风险预警 Agent">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">资源冲突与风险预警</h2><p className="mt-1 text-sm text-slate-600">扫描临近截止与逾期任务、成员跨项目周容量、未完成前置任务、依赖排期和历史延期率。容量按当前 UTC 周统计，未来周可在排期页面预览。预警保留扫描时的依据，仅供决策参考，不会自动修改任务状态。</p></div><button type="button" disabled={capabilities?.writable === false || busy} onClick={() => void scan()} className="rounded-md bg-amber-800 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-900 disabled:opacity-50">{busy ? "处理中…" : "扫描项目风险"}</button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">资源冲突与风险预警</h2><p className="mt-1 text-sm text-slate-600">扫描临近截止与逾期任务、成员跨项目周容量、未完成前置任务、依赖排期和历史延期率。容量按当前 UTC 周统计，未来周可在成员页面预览。预警保留扫描时的依据，仅供决策参考，不会自动修改任务状态。</p></div><button type="button" disabled={capabilities?.writable === false || busy} onClick={() => void scan()} className="rounded-md bg-amber-800 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-900 disabled:opacity-50">{busy ? "处理中…" : "扫描项目风险"}</button></div>
     <RiskSchedulePanel projectId={projectId} />
     {error && <p role="alert" className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p>}{notice && <p role="status" className="mt-3 rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
     {warnings.length > 0 ? <div className="mt-4 space-y-3">{warnings.map((warning) => <article key={warning.id} className="rounded-lg border border-amber-200 bg-white p-4">

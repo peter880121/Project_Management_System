@@ -31,7 +31,7 @@ export function MeetingAiPanel({ projectId, meeting, writable, onChanged, onLink
       });
       ac.signal.throwIfAborted(); const parsed = summaryResultSchema.parse(output); animation.stop(); setPreview(parsed.summary); setResult(parsed); setProgress("提炼完成 · 等待人工确认");
     } catch (error) {
-      animation.stop(); if (!ac.signal.aborted) { notify(error instanceof Error ? error.message : "AI 提炼失败", "error"); setProgress("未完成提炼，请重试或手动整理"); if (error instanceof AiStreamError && ["UNAUTHORIZED", "PROJECT_ARCHIVED"].includes(error.code)) window.dispatchEvent(new CustomEvent("project-access-invalidated", { detail: { code: error.code } })); }
+      animation.stop(); if (!ac.signal.aborted) { notify(error instanceof Error ? error.message : "AI 提炼失败", "error"); setProgress("未完成提炼，请重试或手动整理"); if (error instanceof AiStreamError && ["UNAUTHORIZED", "PROJECT_ARCHIVED", "PROJECT_FROZEN"].includes(error.code)) window.dispatchEvent(new CustomEvent("project-access-invalidated", { detail: { code: error.code } })); }
     } finally { locked.current = false; if (!ac.signal.aborted) setBusy(false); }
   }
   async function apply() {

@@ -18,7 +18,7 @@ function GETHandler(_request: Request, context: Context) {
 function POSTHandler(request: Request, context: Context) {
   return documentHttp(["PM", "ADMIN"], async (actor) => {
     const input = parseRequestSchema.safeParse(await request.json().catch(() => null));
-    if (!input.success) throw new DocumentError("请确认云端处理并提供有效版本和请求标识", 400);
+    if (!input.success) throw new DocumentError("请提供有效解析版本、请求标识和处理确认参数", 400);
     return Response.json({ data: await requestDocumentParse(documentId((await context.params).documentId), input.data, { actorId: actor.id, ...getAuditRequestMetadata(request) }) }, { status: 202 });
   });
 }

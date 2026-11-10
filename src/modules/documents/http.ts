@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/modules/auth/session";
 import { requireRole, type AuthenticatedUser } from "@/modules/auth/rbac";
 import { DocumentError } from "./validation";
 import { ProjectAccessError } from "@/modules/auth/project-access";
-export const documentReaders: Role[] = ["ADMIN", "PM", "MEMBER", "QA"];
+export const documentReaders: Role[] = ["ADMIN", "PM", "MEMBER", "QA", "PMO"];
 export async function documentHttp(roles: Role[], action: (actor: AuthenticatedUser) => Promise<Response>) {
   try {
     const actor = await getCurrentUser(); const denied = requireRole(actor, roles);

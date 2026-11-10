@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { expect, test } from "@playwright/test";
+import { findingLabels } from "../src/modules/audit/presentation";
 import { hashPassword } from "../src/modules/auth/password";
 
 const db = new PrismaClient();
@@ -41,23 +42,24 @@ test("QA scans six gaps, reviews findings and summary, follows evidence, and rec
   await page.getByLabel("选择审计项目", { exact: true }).selectOption(projectId);
   await page.getByRole("button", { name: "生成合规摘要", exact: true }).click();
   const panel = page.getByRole("region", { name: "合规审计摘要", exact: true });
-  await expect(panel.getByRole("heading", { name: "合规审计摘要 · PENDING", exact: true })).toBeVisible({ timeout: 45000 });
-  for (const code of ["TASK_WITHOUT_REQUIREMENT", "APPROVED_REQUIREMENT_WITHOUT_TASK", "REQUIREMENT_WITHOUT_TEST", "DONE_TASK_WITH_UNPASSED_TEST", "TASK_REQUIREMENT_REVIEW_STALE", "TEST_REQUIREMENT_REVIEW_STALE"]) await expect(panel.getByRole("heading", { name: code, exact: true }).first()).toBeVisible();
-  const finding = panel.locator("article").filter({ has: page.getByRole("heading", { name: "TASK_WITHOUT_REQUIREMENT", exact: true }) });
+  await expect(panel.getByRole("heading", { name: "合规审计摘要 · 待复核", exact: true })).toBeVisible({ timeout: 45000 });
+  for (const code of ["TASK_WITHOUT_REQUIREMENT", "APPROVED_REQUIREMENT_WITHOUT_TASK", "REQUIREMENT_WITHOUT_TEST", "DONE_TASK_WITH_UNPASSED_TEST", "TASK_REQUIREMENT_REVIEW_STALE", "TEST_REQUIREMENT_REVIEW_STALE"]) await expect(panel.getByRole("heading", { name: findingLabels[code], exact: true }).first()).toBeVisible();
+  const finding = panel.locator("article").filter({ has: page.getByRole("heading", { name: findingLabels.TASK_WITHOUT_REQUIREMENT, exact: true }) });
   await finding.getByLabel("问题复核说明", { exact: true }).fill("Confirmed synthetic missing requirement; PM to correct.");
   const findingReviewed = page.waitForResponse(response => response.request().method() === "POST" && /^\/api\/audit\/summaries\/[^/]+\/findings\/[^/]+\/review$/.test(new URL(response.url()).pathname));
   await finding.getByRole("button", { name: "提交问题复核", exact: true }).click();
   expect((await findingReviewed).status()).toBe(201);
-  await expect(finding.getByText(/CONFIRMED/)).toBeVisible();
+  await expect(finding.getByText(/已确认/)).toBeVisible();
   await panel.getByLabel("摘要复核说明", { exact: true }).fill("Reviewed synthetic snapshot; acceptance does not approve release.");
   const summaryReviewed = page.waitForResponse(response => response.request().method() === "PATCH" && /^\/api\/audit\/summaries\/[^/]+$/.test(new URL(response.url()).pathname));
   await panel.getByRole("button", { name: "提交摘要复核", exact: true }).click();
   expect((await summaryReviewed).status()).toBe(200);
-  await expect(panel.getByRole("heading", { name: "合规审计摘要 · ACCEPTED", exact: true })).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "合规审计摘要 · 已采纳", exact: true })).toBeVisible();
   await page.reload(); await page.getByLabel("选择审计项目", { exact: true }).selectOption(projectId);
+  await page.getByRole("tab", { name: "合规检查", exact: true }).click();
   await page.getByRole("button", { name: "查询历史摘要", exact: true }).click();
   const summaryLoaded = page.waitForResponse(response => response.request().method() === "GET" && /^\/api\/audit\/summaries\/[^/]+$/.test(new URL(response.url()).pathname));
-  await page.getByRole("button", { name: /ACCEPTED/ }).click();
+  await page.getByRole("button", { name: /已采纳/ }).click();
   expect((await summaryLoaded).status()).toBe(200);
   await expect(page.getByText("Confirmed synthetic missing requirement; PM to correct.", { exact: false })).toBeVisible();
 
@@ -65,7 +67,7 @@ test("QA scans six gaps, reviews findings and summary, follows evidence, and rec
   try {
     expect((await pm.request.post("/api/auth/login", { data: { email: emails[1], password } })).status()).toBe(200);
     expect((await pm.request.post("/api/audit/summary", { data: { projectId } })).status()).toBe(403);
-    expect((await pm.request.post(`/api/projects/${projectId}/traceability`, { data: { kind: "requirement", title: "Synthetic new requirement", content: "Synthetic", status: "DRAFT" } })).status()).toBe(201);
+    expect((await pm.request.post(`/api/projects/${projectId}/requirements`, { data: { title: "Synthetic new requirement", content: "Synthetic", acceptanceCriteria: "Verify synthetic behavior", dueDate: "2026-12-31", requestKey: randomUUID() } })).status()).toBe(201);
     expect((await pm.request.patch(`/api/projects/${projectId}/traceability`, { data: { kind: "requirement", id: changeRequirementId, expectedVersion: 1, title: "Synthetic reviewed requirement", content: "Updated synthetic release criteria", status: "APPROVED" } })).status()).toBe(200);
   } finally { await pm.close(); }
   await page.goto(`/projects/${projectId}/traceability`);
@@ -79,7 +81,7 @@ test("QA scans six gaps, reviews findings and summary, follows evidence, and rec
   // A reviewed version emits an audit reference that can be opened outside a filtered list.
   await page.goto("/audit"); await page.getByLabel("选择审计项目", { exact: true }).selectOption(projectId);
   await page.getByRole("button", { name: "生成合规摘要", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "合规审计摘要 · PENDING", exact: true })).toBeVisible({ timeout: 45000 });
+  await expect(page.getByRole("heading", { name: "合规审计摘要 · 待复核", exact: true })).toBeVisible({ timeout: 45000 });
   await page.getByRole("link", { name: /^审计记录 / }).first().click();
-  await expect(page.getByRole("heading", { name: "原始审计记录", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "审计记录详情", exact: true })).toBeVisible();
 });

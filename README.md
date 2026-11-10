@@ -61,7 +61,7 @@ flowchart LR
 
 | 冲突场景 | 服务端约束 | 客户端恢复 |
 |---|---|---|
-| 多人修改排期或容量 | `expectedVersion` + 条件更新，成功后版本递增；陈旧写入返回 409 | 甘特条恢复真实位置并读取最新版本；刷新失败则暂停编辑，不自动重放写入 |
+| 多人修改计划或容量 | `expectedVersion` + 条件更新，成功后版本递增；陈旧写入返回 409 | 任务抽屉重新读取真实计划；容量在成员页维护。刷新失败暂停编辑，不自动重放写入；甘特图只读展示 |
 | 权限撤销与业务提交竞争 | 事务行锁、事务内权限复核，业务与审计原子提交 | 明确权限错误，刷新会话与页面权限 |
 | 重复签署、采纳或审核 | 状态条件更新、事务内再次检查；拒绝已处理请求 | 提交锁与 loading 防重复；保存成功和刷新失败分别反馈 |
 | 任务切换与异步响应竞争 | 请求关联生成批次；最终保存复核来源任务版本 | AbortController + 请求版本号，旧任务响应不能覆盖新抽屉 |
@@ -127,7 +127,14 @@ node scripts/test-project-ia.mjs
 
 ## 设计与验证入口
 
+- [项目暂停、恢复与取消：统一冻结与验证记录](docs/project-pause-cancel.md)
+- [任务取消与重开：签名隔离、统计口径与验证记录](docs/task-lifecycle.md)
+- [项目与任务基本信息维护：编辑、负责人交接与事务边界](docs/project-task-maintenance.md)
+- [多格式交付物：PDF、DOCX、文本与 Markdown 解析](docs/document-formats.md)
+- [会议附件：上传、权限继承与证据留存](docs/meeting-attachments.md)
+- [智能助手：内部知识优先、通用知识、联网确认与权限隔离](docs/rag-assistant.md)
 - [电子签名与事务审计](docs/task-signatures.md) · [事务锁与错误边界](docs/transaction-locking.md)
 - [SSE 协议、取消与权限撤销](docs/ai-streaming.md) · [文档 RAG 与证据来源](docs/document-rag.md)
 - [排期、周容量与甘特图冲突恢复](docs/planning-capacity.md) · [项目授权与合规导出](docs/project-access-exports.md)
 - [角色演示路径](docs/角色分模块演示流程.md) · [已知限制与历史验证](docs/known-issues.md)
+- [模拟测试方案](docs/MedPM-AI-模拟测试方案.md) · [执行台账](output/test-plan/MedPM-AI-模拟测试方案-执行台账.xlsx)

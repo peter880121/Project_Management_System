@@ -21,7 +21,7 @@ test("PM uploads through S3 SDK; QA downloads identical bytes with audit; failur
   test.setTimeout(90000);
   expect((await page.request.post("/api/auth/login", { data: { email: emails[0], password } })).status()).toBe(200);
   await page.goto(`/projects/${projectId}/documents`);
-  await page.getByLabel("选择 PDF", { exact: true }).setInputFiles({ name: "合成需求.pdf", mimeType: "application/pdf", buffer: pdf });
+  await page.getByLabel("选择文件", { exact: true }).setInputFiles({ name: "合成需求.pdf", mimeType: "application/pdf", buffer: pdf });
   await page.getByRole("checkbox", { name: "确认文件仅含合成数据，不含真实患者信息", exact: true }).check(); await page.getByRole("button", { name: "上传文档", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("文档已保存", { timeout: 20000 });
   const document = page.locator("article").filter({ has: page.getByRole("heading", { name: "合成需求.pdf", exact: true }) });
@@ -39,7 +39,7 @@ test("PM uploads through S3 SDK; QA downloads identical bytes with audit; failur
     expect((await page.request.post("/api/auth/login", { data: { email: emails[0], password } })).status()).toBe(200);
     await fetch(`${fixture}/__fixture/fail-writes?enabled=true`, { method: "POST" });
     try {
-      await page.reload(); await page.getByLabel("选择 PDF", { exact: true }).setInputFiles({ name: "失败合成.pdf", mimeType: "application/pdf", buffer: pdf }); await page.getByRole("checkbox", { name: "确认文件仅含合成数据，不含真实患者信息", exact: true }).check(); await page.getByRole("button", { name: "上传文档", exact: true }).click();
+      await page.reload(); await page.getByLabel("选择文件", { exact: true }).setInputFiles({ name: "失败合成.pdf", mimeType: "application/pdf", buffer: pdf }); await page.getByRole("checkbox", { name: "确认文件仅含合成数据，不含真实患者信息", exact: true }).check(); await page.getByRole("button", { name: "上传文档", exact: true }).click();
       await expect(page.getByRole("status")).toContainText("文档上传未完成", { timeout: 20000 });
       await expect(page.locator("article").filter({ hasText: "失败合成.pdf" }).getByText(/上传失败/)).toBeVisible();
     } finally { await fetch(`${fixture}/__fixture/fail-writes?enabled=false`, { method: "POST" }); }

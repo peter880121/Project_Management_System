@@ -32,6 +32,8 @@ export async function buildDocumentChunksTick() {
     await repository.lockRagDocument(tx, candidate.id);
     const document = await repository.loadRagDocumentTx(tx, candidate.id);
     if (document.parsedVersion !== candidate.parsedVersion || document.chunkedVersion === candidate.parsedVersion || document.storageStatus !== "AVAILABLE") return;
+    const asset = await tx.deliverable.findUnique({ where: { documentId: document.id }, select: { status: true } });
+    if (asset && asset.status !== "APPROVED") return;
     for (let offset = 0; offset < chunks.length; offset += 200) {
       await repository.insertChunks(tx, chunks.slice(offset, offset + 200).map((chunk) => ({ ...chunk, id: randomUUID(), documentId: document.id, projectId: document.projectId, parseJobId: job.id, version: candidate.parsedVersion, embeddingModel: model })));
     }
@@ -56,9 +58,9 @@ export async function syncDocumentVectorTick(adapters: DocumentIndexAdapters = {
   try {
     await Promise.race([
       (async () => {
-        const embedding = await adapters.embed(chunk.text, chunk.embeddingModel); if (expired) return;
         const metadata = await prisma.document.findUniqueOrThrow({ where: { id: chunk.documentId }, select: { documentType: true, visibleRoles: true, deliverable: { select: { id: true, status: true } } } });
         if (metadata.deliverable && metadata.deliverable.status !== "APPROVED") throw new Error("ASSET_NOT_APPROVED");
+        const embedding = await adapters.embed(chunk.text, chunk.embeddingModel); if (expired) return;
         await adapters.upsert({ id: chunk.id, docId: chunk.documentId, projectId: chunk.projectId, embedding, createdAt: chunk.createdAt, documentType: metadata.documentType, visibleRoles: metadata.visibleRoles as string[], deliverableId: metadata.deliverable?.id ?? "" });
       })(),
       new Promise<never>((_, reject) => { timer = setTimeout(() => { expired = true; reject(new Error("DOCUMENT_INDEX_TIMEOUT")); }, 40000); }),

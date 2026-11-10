@@ -1,3 +1,4 @@
+import { REQUIREMENT_PROJECT_TABLES } from "@/modules/projects/freeze-manifest";
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -37,31 +38,31 @@ describe.sequential("acceptance and physical archive guards in isolated real MyS
       [pmId, qaId, adminId, memberId] = ids;
       projectId = (await tx.project.create({ data: { name: "Synthetic closure project", ownerId: pmId, status: "ACTIVE" } })).id;
       await tx.projectMember.createMany({ data: [qaId, adminId, memberId].map(userId => ({ projectId, userId })) });
-      taskId = (await tx.task.create({ data: { projectId, title: "Synthetic final delivery", status: "DONE", requiresDeliverable: true, actualHours: 2 } })).id;
+      taskId = (await tx.task.create({ data: { projectId, title: "Synthetic final delivery", status: "DONE", completedAt: new Date("2026-10-19T02:00:00.123Z"), requiresDeliverable: true, actualHours: 2 } })).id;
       documentId = (await tx.document.create({ data: { projectId, filename: "synthetic-final.pdf", minioKey: `synthetic/${randomUUID()}.pdf`, sha256: "a".repeat(64), fileSize: 50, mediaType: "application/pdf", storageStatus: "AVAILABLE" } })).id;
       const id = randomUUID(); deliverableId = (await tx.deliverable.create({ data: { id, seriesId: id, projectId, taskId, documentId, name: "Synthetic approved report", status: "APPROVED", createdById: pmId, submittedById: pmId, reviewedById: qaId, reviewedAt: new Date() } })).id;
       meetingId = (await tx.meetingRecord.create({ data: { projectId, title: "Synthetic final meeting", meetingDate: new Date(), content: "Synthetic final evidence", actionItems: [], requestKey: randomUUID(), createdById: pmId, visibleRoles: ["PM"] } })).id;
-      await tx.auditLog.create({ data: { actorId: pmId, projectId, action: "TASK_SIGNED_AND_COMPLETED", entityType: "Task", entityId: taskId, after: { signatureReason: "确认验收与移交完成" } } });
+      await tx.auditLog.create({ data: { actorId: pmId, projectId, action: "TASK_SIGNED_AND_COMPLETED", entityType: "Task", entityId: taskId, after: { signatureReason: "确认验收与移交完成", status: "DONE", completedAt: (await tx.task.findUniqueOrThrow({ where: { id: taskId } })).completedAt!.toISOString() } } });
     });
   });
   afterAll(async () => { await db.$disconnect(); await admin.$disconnect(); /* Retain isolated DB for forensic rollback evidence. */ });
   it("has all guarded tables/triggers and uses the Project primary key lookup", async () => {
     const rows = await db.$queryRaw<{ n: bigint }[]>`SELECT COUNT(*) n FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME LIKE 'freeze_%'`;
-    expect(Number(rows[0].n)).toBe(60);
+    expect(Number(rows[0].n)).toBe(60 + 3 * REQUIREMENT_PROJECT_TABLES.length);
     const guards = await db.$queryRaw<{ tableName: string; eventName: string }[]>`SELECT EVENT_OBJECT_TABLE tableName, EVENT_MANIPULATION eventName FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME LIKE 'freeze_%'`;
     for (const table of FROZEN_PROJECT_TABLES) for (const event of ["INSERT", "UPDATE", "DELETE"]) expect(guards.some(g => g.tableName.toLowerCase() === table.toLowerCase() && g.eventName === event)).toBe(true);
     const plan = await db.$queryRawUnsafe<Record<string, string>[]>("EXPLAIN FORMAT=JSON SELECT status FROM Project WHERE id = ? FOR UPDATE", projectId);
     expect(Object.values(plan[0])[0]).toMatch(/"key":\s*"PRIMARY"/);
   });
   it("rejects incomplete tasks or missing approved deliverables without creating a batch", async () => {
-    await db.$transaction(tx => tx.task.update({ where: { id: taskId }, data: { status: "IN_PROGRESS" } }));
+    await db.$transaction(tx => tx.task.update({ where: { id: taskId }, data: { status: "IN_PROGRESS", completedAt: null, actualHours: null, completionRoundId: null, signatureEvidenceVersion: 2 } }));
     await expect(transitionProject(projectId, "submit-acceptance", body(1), { actorId: pmId })).rejects.toMatchObject({ status: 400 });
-    await db.$transaction(async tx => { await tx.task.update({ where: { id: taskId }, data: { status: "DONE" } }); await tx.deliverable.update({ where: { id: deliverableId }, data: { status: "REJECTED" } }); });
+    await db.$transaction(async tx => { const round = randomUUID(); const completedAt = new Date("2026-10-19T02:00:00.123Z"); await tx.task.update({ where: { id: taskId }, data: { status: "DONE", completedAt, actualHours: 2, completionRoundId: round } }); await tx.auditLog.create({ data: { projectId, actorId: pmId, action: "TASK_SIGNED_AND_COMPLETED", entityType: "Task", entityId: taskId, after: { status: "DONE", actualHours: 2, completedAt: completedAt.toISOString(), completionRoundId: round, signatureReason: "确认验收与移交完成" } } }); await tx.deliverable.update({ where: { id: deliverableId }, data: { status: "REJECTED" } }); });
     await expect(transitionProject(projectId, "submit-acceptance", body(1), { actorId: pmId })).rejects.toMatchObject({ status: 400 }); expect(await db.projectAcceptance.count({ where: { projectId } })).toBe(0);
   });
   it("stores only bounded core evidence and hashes MySQL's stored JSON canonically", async () => {
     await transitionProject(projectId, "submit-acceptance", body(1), { actorId: pmId }); const row = await db.projectAcceptance.findFirstOrThrow({ where: { projectId } });
-    expect(snapshotHash(row.snapshot)).toBe(row.snapshotSha256); expect(Object.keys(row.snapshot as object).sort()).toEqual(["deliverables", "signatureAuditIds", "tasks", "version"]);
+    expect(snapshotHash(row.snapshot)).toBe(row.snapshotSha256); expect(Object.keys(row.snapshot as object).sort()).toEqual(["cancellationAuditIds", "compliance", "deliverables", "requirements", "signatureAuditIds", "tasks", "version"]);
     expect(JSON.stringify(row.snapshot)).not.toContain("Synthetic final evidence"); expect(JSON.stringify(row.snapshot)).not.toContain("minioKey");
     await expect(db.$executeRaw`UPDATE ProjectAcceptance SET snapshotSha256 = ${"b".repeat(64)} WHERE id = ${row.id}`).rejects.toThrow("ER_ACCEPTANCE_IMMUTABLE");
     await expect(db.$executeRaw`DELETE FROM ProjectAcceptance WHERE id = ${row.id}`).rejects.toThrow("ER_ACCEPTANCE_IMMUTABLE");
@@ -145,7 +146,7 @@ describe.sequential("acceptance and physical archive guards in isolated real MyS
     await db.$transaction(async tx => {
       requirementId = (await tx.requirement.create({ data: { projectId, title: "Synthetic requirement", content: "Synthetic evidence" } })).id;
       testId = (await tx.testCase.create({ data: { requirementId, title: "Synthetic verification" } })).id;
-      const parent = await tx.task.create({ data: { projectId, title: "Synthetic prerequisite", status: "DONE", actualHours: 1 } }); edgeId = (await tx.taskDependency.create({ data: { taskId, dependsOnTaskId: parent.id } })).id;
+      const parent = await tx.task.create({ data: { projectId, title: "Synthetic prerequisite", status: "DONE", completedAt: new Date("2026-10-19T01:00:00.000Z"), actualHours: 1 } }); await tx.auditLog.create({ data: { projectId, actorId: pmId, action: "TASK_SIGNED_AND_COMPLETED", entityType: "Task", entityId: parent.id, after: { status: "DONE", signatureReason: "确认任务已完成", completedAt: parent.completedAt!.toISOString() } } }); edgeId = (await tx.taskDependency.create({ data: { taskId, dependsOnTaskId: parent.id } })).id;
       suggestionId = (await tx.aiSuggestion.create({ data: { projectId, type: "WBS", input: {}, output: {}, status: "PENDING" } })).id;
     }); await archive();
     await denied(() => db.$executeRaw`UPDATE Requirement SET content = 'Tampered' WHERE id = ${requirementId}`);

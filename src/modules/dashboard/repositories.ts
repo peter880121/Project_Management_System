@@ -1,4 +1,7 @@
+import { liveRiskTaskClause } from "@/modules/ai/risk/visibility";
+import { calendarDateTime, businessToday } from "@/modules/tasks/plan";
 import { Prisma } from "@prisma/client";
+import { completionRoundEvidence } from "@/modules/tasks/signature-evidence";
 import type { AuthenticatedUser } from "@/modules/auth/rbac";
 import { SIGNATURE_REASONS } from "@/modules/tasks/signature";
 import { dashboardSqlScope } from "./scope";
@@ -18,6 +21,7 @@ export async function unsignedTaskCount(tx: Prisma.TransactionClient, actor: Aut
         AND JSON_UNQUOTE(JSON_EXTRACT(a.after, '$.signatureReason')) IN (${Prisma.join([...SIGNATURE_REASONS])})
         AND JSON_UNQUOTE(JSON_EXTRACT(a.after, '$.completedAt')) = CONCAT(
           DATE_FORMAT(t.completedAt, '%Y-%m-%dT%H:%i:%s.'), LPAD(FLOOR(MICROSECOND(t.completedAt) / 1000), 3, '0'), 'Z')
+        AND ${completionRoundEvidence}
       )`);
   return Number(rows[0].count);
 }
@@ -28,11 +32,11 @@ export async function dashboardRows(tx: Prisma.TransactionClient, actor: Authent
     const scope = dashboardScope(actor, query.projectId);
     const operational: Prisma.ProjectWhereInput = { AND: [scope, { status: { in: [...operationalStatuses] } }] };
     const active: Prisma.ProjectWhereInput = { AND: [scope, { status: "ACTIVE" }] };
-    const taskScope: Prisma.TaskWhereInput = { project: operational, status: { not: "DONE" } };
+    const taskScope: Prisma.TaskWhereInput = { project: operational, status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] } };
     // All queries aggregate in MySQL. Promise.all schedules work; a transaction uses one connection.
     const [states, overdueTasks, unsignedTasks, workload, unassigned, projects, activeCount, trend] = await Promise.all([
       tx.project.groupBy({ by: ["status"], where: scope, _count: { _all: true } }),
-      tx.task.count({ where: { ...taskScope, dueDate: { lt: now } } }),
+      tx.task.count({ where: { ...taskScope, dueDate: { lt: calendarDateTime(businessToday(now)) } } }),
       unsignedTaskCount(tx, actor, query.projectId),
       tx.task.groupBy({ by: ["assigneeId"], where: { ...taskScope, assigneeId: { not: null } }, _count: { id: true }, orderBy: [{ _count: { id: "desc" } }, { assigneeId: "asc" }], skip: (query.loadPage - 1) * pageSize, take: pageSize + 1 }),
       tx.task.count({ where: { ...taskScope, assigneeId: null } }),
@@ -49,9 +53,9 @@ export async function dashboardRows(tx: Prisma.TransactionClient, actor: Authent
     const visibleRows = workload.slice(0, pageSize);
     const [people, taskCounts, overdueCounts, riskCounts] = await Promise.all([
       tx.user.findMany({ where: { id: { in: visibleRows.flatMap(r => r.assigneeId ? [r.assigneeId] : []) } }, select: { id: true, name: true, role: true }, take: pageSize }),
-      tx.task.groupBy({ by: ["projectId", "status"], where: { project: active, projectId: { in: ids } }, _count: { _all: true } }),
-      tx.task.groupBy({ by: ["projectId"], where: { project: active, projectId: { in: ids }, status: { not: "DONE" }, dueDate: { lt: now } }, _count: { _all: true } }),
-      tx.aiSuggestion.groupBy({ by: ["projectId"], where: { project: active, projectId: { in: ids }, type: "RISK", status: "PENDING", createdAt: { gte: new Date(now.getTime() - 7 * 86400000), lte: now } }, _count: { _all: true } }),
+      tx.task.groupBy({ by: ["projectId", "status"], where: { project: active, projectId: { in: ids }, status: { not: "CANCELLED" } }, _count: { _all: true } }),
+      tx.task.groupBy({ by: ["projectId"], where: { project: active, projectId: { in: ids }, status: { in: ["TODO", "IN_PROGRESS", "BLOCKED"] }, dueDate: { lt: calendarDateTime(businessToday(now)) } }, _count: { _all: true } }),
+      ids.length ? tx.$queryRaw<{ projectId: string; count: bigint }[]>`SELECT s.projectId,COUNT(*) count FROM AiSuggestion s WHERE s.projectId IN (${Prisma.join(ids)}) AND s.type='RISK' AND s.status='PENDING' AND s.createdAt>=${new Date(now.getTime() - 7 * 86400000)} AND s.createdAt<=${now} AND ${liveRiskTaskClause} GROUP BY s.projectId`.then(rows => rows.map(row => ({ projectId: row.projectId, _count: { _all: Number(row.count) } }))) : Promise.resolve([]),
     ]);
     return { states, overdueTasks, unsignedTasks, workload, unassigned, projects, activeCount, trend, visibleRows, people, taskCounts, overdueCounts, riskCounts };
 }

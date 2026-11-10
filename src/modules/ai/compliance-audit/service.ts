@@ -13,6 +13,7 @@ import { findTraceabilityIssues, RULE_VERSION } from "./rules";
 import { insertSummary, loadComplianceSnapshot, type ScanFilters } from "./repositories";
 import { loadAiTask } from "../task-context";
 import { ProjectError } from "@/modules/projects/services";
+import { registerScanIssues } from "@/modules/audit/issue-service";
 export { findTraceabilityIssues } from "./rules";
 
 function parseSummary(raw: string, data: ComplianceAuditInput): ComplianceSummary {
@@ -61,7 +62,7 @@ export async function runComplianceAudit(input: ScanFilters & { actorId: string 
   const snapshot = JSON.parse(JSON.stringify({ filters, ...(stream ? { generationId: stream.generationId } : {}), ruleVersion: RULE_VERSION, scannedAt, coverage, snapshot: data }));
   const jsonOutput = JSON.parse(JSON.stringify(output));
   assertNoControlMarkers({ snapshot, output: jsonOutput });
-  await prisma.$transaction(async (tx) => {
+  const issueRefs = await prisma.$transaction(async (tx) => {
     stream?.signal.throwIfAborted();
     await lockBusinessActor(tx, input.actorId, input.taskId ? ["ADMIN", "QA", "PM"] : ["ADMIN", "QA"], input.projectId);
     if (input.taskId) {
@@ -70,8 +71,10 @@ export async function runComplianceAudit(input: ScanFilters & { actorId: string 
     }
     stream?.signal.throwIfAborted();
     await insertSummary(tx, { id: summaryId, projectId: input.projectId, type: "AUDIT_SUMMARY", status: "PENDING", input: snapshot, output: jsonOutput });
+    const refs = await registerScanIssues(tx, input.projectId, summaryId, result.findings, input);
     await recordAudit(tx, { actorId: input.actorId, projectId: input.projectId, action: "AI_AUDIT_SUMMARY_GENERATED", entityType: "AuditSummary", entityId: summaryId, after: { filters, ruleVersion: RULE_VERSION, coverage, sourceAuditIds: data.auditLogs.map((row) => row.id), result: result.degraded ? "RULE_BASED_FALLBACK" : "AI_SUMMARY", status: "PENDING", findingCount: result.findings.length, summary: result.summary, model: modelName }, ip: input.ip, userAgent: input.userAgent });
     stream?.signal.throwIfAborted();
-  });
-  return { ...output, summaryId, status: "PENDING" as const };
+    return refs;
+  }, { timeout: 30000 });
+  return { ...output, summaryId, issueRefs, status: "PENDING" as const };
 }

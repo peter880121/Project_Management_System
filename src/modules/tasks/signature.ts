@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { completionDateSchema, effortHoursSchema } from "./plan";
 
 export const SIGNATURE_REASONS = [
   "确认任务已完成",
@@ -18,3 +19,10 @@ export const signatureSchema = z.object({
   signatureReason: z.enum(SIGNATURE_REASONS),
 });
 export type TaskSignature = z.infer<typeof signatureSchema>;
+export const taskCompletionSchema = signatureSchema.extend({
+  status: z.literal("DONE"),
+  actualHours: effortHoursSchema,
+  completedAt: completionDateSchema,
+  expectedRowVersion: z.number().int().positive().optional(),
+  expectedCompletionRoundId: z.uuid().nullable().optional(),
+}).strict();

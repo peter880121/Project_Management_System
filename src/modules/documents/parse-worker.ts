@@ -10,6 +10,7 @@ import { createMineruClient, ParseError, type MineruClient } from "./mineru";
 import * as repository from "./parse-repositories";
 import { buildDocumentChunksTick, syncDocumentVectorTick } from "./rag-worker";
 import { syncAssetSourceTick } from "@/modules/assets/source-worker";
+import { parseLocalDocument } from "./local-parser";
 
 const LEASE_MS = 180000;
 async function claimJob() {
@@ -63,6 +64,26 @@ export async function runParseWorkerTick(adapters?: { mineru: MineruClient; stor
   try {
     if (job.deadlineAt.getTime() <= Date.now()) throw new ParseError("MINERU_JOB_TIMEOUT");
     if (job.document.storageStatus !== "AVAILABLE" || job.document.parseVersion !== job.version || job.document.sha256 !== job.sourceSha256) throw new ParseError("PARSE_SOURCE_CHANGED");
+    const asset = await prisma.deliverable.findUnique({ where: { documentId: job.documentId }, select: { status: true } });
+    if (asset && asset.status !== "APPROVED") throw new ParseError("ASSET_NOT_APPROVED");
+    if (job.phase === "LOCAL" && job.provider === "local-document-v1") {
+      const bytes = await storage.get(job.document.minioKey);
+      if (bytes.length !== job.sourceSize || createHash("sha256").update(bytes).digest("hex") !== job.sourceSha256) throw new ParseError("PARSE_SOURCE_INTEGRITY");
+      const result = parseLocalDocument(job.sourceFilename, bytes);
+      const resultSha256 = createHash("sha256").update(JSON.stringify(result)).digest("hex");
+      await prisma.$transaction(async tx => {
+        await lockProjectForWrite(tx, job.document.projectId, true); await lockUsers(tx, [SYSTEM_USER_ID]);
+        await repository.lockParseDocument(tx, job.documentId);
+        const asset = await tx.deliverable.findUnique({ where: { documentId: job.documentId }, select: { status: true } });
+        if (asset && asset.status !== "APPROVED") throw new ParseError("ASSET_NOT_APPROVED");
+        const updated = await repository.updateParseJob(tx, { where: owned(job), data: { status: "SUCCEEDED", phase: "COMPLETED", markdown: result.markdown, blocks: result.blocks, resultSha256, errorCode: null, completedAt: new Date(), leaseUntil: null, leaseToken: null } });
+        if (updated.count !== 1) throw new ParseError("PARSE_LEASE_LOST");
+        const published = await repository.updateParseDocument(tx, { where: { id: job.documentId, parseVersion: job.version, sha256: job.sourceSha256 }, data: { parseStatus: "SUCCEEDED", parsedText: result.markdown, parsedVersion: job.version, parsedAt: new Date() } });
+        if (published.count !== 1) throw new ParseError("PARSE_SOURCE_CHANGED");
+        await recordAudit(tx, { actorId: SYSTEM_USER_ID, projectId: job.document.projectId, action: "DOCUMENT_PARSE_SUCCEEDED", entityType: "DocumentParseJob", entityId: job.id, before: { status: "RUNNING" }, after: { documentId: job.documentId, version: job.version, provider: job.provider, modelVersion: job.modelVersion, resultSha256, blockCount: result.blocks.length, cloudProcessingConfirmed: false, requestedById: job.requestedById }, userAgent: "document-parser-worker" });
+      });
+      return true;
+    }
     const mineru = adapters?.mineru ?? createMineruClient();
     if (job.phase === "RESERVE") {
       const remote = await mineru.reserve(job.id, job.sourceFilename, job.modelVersion);

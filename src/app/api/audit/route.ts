@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/modules/auth/session";
 import { requireRole } from "@/modules/auth/rbac";
 import { auditQuerySchema, buildAuditWhere } from "@/modules/audit/query";
 import { visibleProjectWhere } from "@/modules/auth/project-access";
+import { enrichAuditRows } from "@/modules/audit/repositories";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,8 +25,10 @@ export async function GET(request: Request) {
     where: { AND: [buildAuditWhere(parsed.data), ...(user!.role === "ADMIN" ? [] : [{ project: { is: visibleProjectWhere(user!) } }])] },
     include: { actor: { select: { id: true, name: true, role: true } } },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: limit,
+    take: limit + 1,
+    ...(parsed.data.cursor ? { cursor: { id: parsed.data.cursor }, skip: 1 } : {}),
   });
 
-  return NextResponse.json({ data });
+  const page = data.slice(0, limit);
+  return NextResponse.json({ data: await enrichAuditRows(page), nextCursor: data.length > limit ? page.at(-1)?.id : null });
 }

@@ -1,3 +1,4 @@
+import { freeLocalPort } from "../fixtures/free-port.mjs";
 import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -37,7 +38,7 @@ testDatabaseUrl.pathname = `/${databaseName}`;
 const admin = new PrismaClient({ datasources: { db: { url: adminUrl.toString() } } });
 const nextCli = "node_modules/next/dist/bin/next";
 const prismaCli = "node_modules/prisma/build/index.js";
-const port = 4418;
+const port = await freeLocalPort();
 const endpoint = `http://127.0.0.1:${port}/api/auth/login`;
 let server: ChildProcess | undefined;
 let serverOutput = "";

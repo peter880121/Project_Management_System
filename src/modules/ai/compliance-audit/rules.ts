@@ -10,8 +10,9 @@ export function findTraceabilityIssues(data: ComplianceAuditInput): ComplianceFi
     findings.push({ findingKey: `${code}:${id}:${version ?? 0}`, code, summary: recordIds.length > 30 ? `${summary} 关联证据较多，仅展示前 30 项，请补查。` : summary, recordIds: ids, auditIds, requirementVersion: version, sourceAuditMissing: auditIds.length === 0 });
   }
   for (const task of data.tasks) {
+    if (task.status === "CANCELLED") continue;
     const requirement = task.requirementId ? requirements.get(task.requirementId) : undefined;
-    if (!task.requirementId) {
+    if (!task.requirementId && !data.taskRequirementLinks?.some(l => l.taskId === task.id)) {
       add("TASK_WITHOUT_REQUIREMENT", task.id, "任务未关联需求。", [task.id]);
       continue;
     }
@@ -22,7 +23,7 @@ export function findTraceabilityIssues(data: ComplianceAuditInput): ComplianceFi
   }
   for (const requirement of data.requirements) {
     if (requirement.status === "RETIRED") continue;
-    if (requirement.status === "APPROVED" && !data.tasks.some((row) => row.requirementId === requirement.id)) add("APPROVED_REQUIREMENT_WITHOUT_TASK", requirement.id, "已批准需求没有关联任务。", [requirement.id], requirement.version);
+    if (requirement.status === "APPROVED" && !data.tasks.some((row) => row.status !== "CANCELLED" && (row.requirementId === requirement.id || data.taskRequirementLinks?.some(l => l.taskId === row.id && l.requirementId === requirement.id)))) add("APPROVED_REQUIREMENT_WITHOUT_TASK", requirement.id, "已批准需求没有关联任务。", [requirement.id], requirement.version);
     if (!data.testCases.some((row) => row.requirementId === requirement.id)) add("REQUIREMENT_WITHOUT_TEST", requirement.id, "需求尚无测试用例。", [requirement.id], requirement.version);
   }
   for (const testCase of data.testCases) {

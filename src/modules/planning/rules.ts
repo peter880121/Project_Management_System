@@ -27,7 +27,7 @@ export function calculateWeeklyLoad(tasks: LoadTask[], members: { id: string; na
     const capacity = capacities.find((row) => row.userId === member.id); let hours = 0;
     const taskIds: string[] = []; const projectIds = new Set<string>(); const incompleteTaskIds: string[] = [];
     for (const task of tasks) {
-      if (task.assigneeId !== member.id || task.status === "DONE") continue;
+      if (task.assigneeId !== member.id || ["DONE", "CANCELLED"].includes(task.status)) continue;
       if (task.plannedStartDate && dateDay(task.plannedStartDate) > end) continue;
       // Unfinished overdue work has no trustworthy current allocation until rescheduled.
       if (task.dueDate && dateDay(task.dueDate) < start) { incompleteTaskIds.push(task.id); continue; }

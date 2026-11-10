@@ -15,6 +15,13 @@ scripts/prepare-demo-*.mjs
 *.log
 *.tsbuildinfo
 .pnpm-store
+output/task-plan-actual
+.maintenance
+.qqbot-tools
+output/environment
+output/half-year-simulation
+output/audit-remediation
+output/weekly-reports
 .env
 .env.*
 !.env.example

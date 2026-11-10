@@ -29,24 +29,26 @@ test("board guides before password, uploads V1, approves evidence, preserves V1 
   test.setTimeout(120000);
   await page.goto(`/projects/${projectId}/board`); const card = page.locator(`[data-task-card="${taskId}"]`);
   await expect(card.getByLabel("需交付物", { exact: true })).toBeVisible();
-  await page.screenshot({ path: `${evidence}/01-board-requires-deliverable.png`, fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/01-board-requires-deliverable.png`, fullPage: true });
   await card.getByRole("button", { name: "完成", exact: true }).click();
   const drawer = page.getByRole("dialog", { name: "任务详情", exact: true });
   await expect(drawer.getByText(/该任务必须挂载交付物/)).toBeVisible();
   await expect(page.getByRole("dialog", { name: "电子签名", exact: true })).toHaveCount(0);
   await expect(drawer.getByRole("tab", { name: "📎 交付物管理", exact: true })).toHaveAttribute("aria-selected", "true");
   await drawer.getByRole("tab", { name: "📎 交付物管理", exact: true }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `${evidence}/02-drawer-deliverable-tab.png`, fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/02-drawer-deliverable-tab.png`, fullPage: true });
   await drawer.getByLabel("交付物名称", { exact: true }).fill("合成交付验收报告");
-  await drawer.getByLabel("交付文件（PDF，最大 20 MB）", { exact: true }).setInputFiles({ name: "synthetic-report-v1.pdf", mimeType: "application/pdf", buffer: pdf(1) });
+  await drawer.getByLabel("交付文件（PDF / DOCX / TXT / TEXT / MD）", { exact: true }).setInputFiles({ name: "synthetic-report-v1.pdf", mimeType: "application/pdf", buffer: pdf(1) });
   await drawer.getByRole("checkbox", { name: /我确认文件仅包含合成数据/ }).check();
+  const versionSaved = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/projects/${projectId}/deliverables`);
   await drawer.getByRole("button", { name: "保存交付版本", exact: true }).click();
+  expect((await versionSaved).status()).toBe(201);
   await expect(drawer.getByText("交付版本 V1", { exact: true })).toBeVisible();
-  await drawer.getByRole("checkbox", { name: /同意批准后将合成文件/ }).check();
+  await drawer.getByRole("checkbox", { name: /同意批准后将合成 PDF/ }).check();
   await drawer.getByRole("button", { name: "提交审批", exact: true }).click();
   await expect(drawer.getByText("待审批", { exact: true })).toBeVisible();
   await drawer.getByText("交付版本 V1", { exact: true }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `${evidence}/02b-drawer-submitted-version.png`, fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/02b-drawer-submitted-version.png`, fullPage: true });
   const deliverable = await db.deliverable.findFirstOrThrow({ where: { projectId, taskId, version: 1 } });
   const qaContext = await browser.newContext({ baseURL: process.env.E2E_BASE_URL }); const qaPage = await qaContext.newPage();
   try {
@@ -55,7 +57,7 @@ test("board guides before password, uploads V1, approves evidence, preserves V1 
     await qaPage.getByRole("button", { name: "批准交付物", exact: true }).click();
     await expect(qaPage.getByText("已批准", { exact: true })).toBeVisible();
     await expect(qaPage.getByText(/已批准版本只读/)).toBeVisible();
-    await qaPage.screenshot({ path: `${evidence}/03-approved-evidence.png`, fullPage: true });
+    if (process.env.E2E_CAPTURE_EVIDENCE === "1") await qaPage.screenshot({ path: `${evidence}/03-approved-evidence.png`, fullPage: true });
   } finally { await qaContext.close(); }
   const original = await db.deliverable.findUniqueOrThrow({ where: { id: deliverable.id }, include: { document: true } });
   expect(original.document.parseStatus).toBe("QUEUED");
@@ -63,10 +65,10 @@ test("board guides before password, uploads V1, approves evidence, preserves V1 
   await expect(drawer.getByText("已批准", { exact: true })).toBeVisible();
   await drawer.getByRole("button", { name: "基于 V1 上传新版本", exact: true }).click();
   await expect(drawer.getByText(/基准版本：V1/)).toBeVisible();
-  await drawer.getByLabel("交付文件（PDF，最大 20 MB）", { exact: true }).setInputFiles({ name: "synthetic-report-v2.pdf", mimeType: "application/pdf", buffer: pdf(2) });
+  await drawer.getByLabel("交付文件（PDF / DOCX / TXT / TEXT / MD）", { exact: true }).setInputFiles({ name: "synthetic-report-v2.pdf", mimeType: "application/pdf", buffer: pdf(2) });
   await drawer.getByRole("checkbox", { name: /我确认文件仅包含合成数据/ }).check();
   await drawer.getByText(/基准版本：V1/).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `${evidence}/05-version-comparison.png`, fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/05-version-comparison.png`, fullPage: true });
   await drawer.getByRole("button", { name: "保存交付版本", exact: true }).click();
   await expect(drawer.getByText("交付版本 V2", { exact: true })).toBeVisible();
   const v2 = await db.deliverable.findFirstOrThrow({ where: { projectId, seriesId: original.seriesId, version: 2 }, include: { document: true } });
@@ -74,9 +76,8 @@ test("board guides before password, uploads V1, approves evidence, preserves V1 
   expect(await db.deliverable.findUnique({ where: { id: original.id }, include: { document: true } })).toEqual(original);
   const download = await page.request.get(`/api/documents/${original.documentId}/download`); expect(download.status()).toBe(200); expect(await download.body()).toEqual(pdf(1));
   await drawer.getByRole("tab", { name: "任务信息", exact: true }).click();
-  await drawer.getByLabel("实际工时 交付验收报告", { exact: true }).fill("2");
   await drawer.getByRole("button", { name: "完成", exact: true }).click();
-  const signature = page.getByRole("dialog", { name: "电子签名", exact: true }); await signature.getByLabel("签名密码", { exact: true }).fill(password);
+  const signature = page.getByRole("dialog", { name: "电子签名", exact: true }); await signature.getByLabel("签名实际工时").fill("2"); await signature.getByLabel("签名密码", { exact: true }).fill(password);
   await signature.getByRole("button", { name: "确认签署", exact: true }).click();
   await expect(signature).toHaveCount(0); expect((await db.task.findUniqueOrThrow({ where: { id: taskId } })).status).toBe("DONE");
   const audit = await db.auditLog.findFirstOrThrow({ where: { entityId: taskId, action: "TASK_SIGNED_AND_COMPLETED" } }); expect(audit.after).toMatchObject({ completionEvidence: { id: original.id, version: 1, document: { sha256: original.document.sha256 } } });
@@ -102,7 +103,7 @@ test("meeting checklist is persisted, private meetings reject QA, and manual kno
   await form.getByRole("button", { name: "＋ 添加行动项", exact: true }).click(); await form.getByLabel("行动项 2", { exact: true }).fill("安排交付报告评审并建立验证任务");
   await form.getByRole("checkbox", { name: /仅项目 PM 可见/ }).check();
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: `${evidence}/04-meeting-create-checklist.png`, fullPage: true });
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/04-meeting-create-checklist.png`, fullPage: true });
   await form.getByRole("button", { name: "保存会议纪要", exact: true }).click();
   const detail = page.getByRole("article", { name: "会议纪要详情" }); await expect(detail.getByText("确认项目角色与责任矩阵", { exact: true })).toBeVisible();
   const row = await db.meetingRecord.findFirstOrThrow({ where: { projectId, title: "项目启动会（合成纪要）" } }); expect(row.actionItems).toMatchObject([{ checked: true }, { checked: false }]);

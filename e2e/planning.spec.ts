@@ -24,14 +24,19 @@ test.afterAll(async () => { try { await db.$transaction((tx) => tx.session.delet
 test("PM maintains planning/capacity, scans cross-project overload, and QA remains read-only", async ({ page }) => {
   test.setTimeout(90000);
   expect((await page.request.post("/api/auth/login", { data: { email: pmEmail, password } })).status()).toBe(200);
-  await page.goto(`/projects/${projectId}/planning`);
-  await page.getByRole("button", { name: "表格视图", exact: true }).click();
-  const task = page.locator("article").filter({ has: page.getByRole("link", { name: title, exact: true }) });
-  await task.getByLabel(`开始日期 ${title}`, { exact: true }).fill(week); await task.getByLabel(`截止日期 ${title}`, { exact: true }).fill(due); await task.getByLabel(`预计工时 ${title}`, { exact: true }).fill("30");
-  await task.getByRole("button", { name: "保存排期", exact: true }).click();
+  await page.goto(`/projects/${projectId}/board?taskId=${taskId}`);
+  const task = page.getByRole("dialog", { name: "任务详情", exact: true });
+  await task.getByText("编辑计划安排", { exact: true }).click();
+  await task.getByLabel("计划开始日期", { exact: true }).fill(week); await task.getByLabel("计划完成日期", { exact: true }).fill(due); await task.getByLabel("计划预计工时", { exact: true }).fill("30");
+  const planSaved = page.waitForResponse(r => r.request().method() === "PATCH" && r.url().endsWith(`/api/tasks/${taskId}/schedule`));
+  await task.getByRole("button", { name: "保存任务计划", exact: true }).click(); expect((await planSaved).status()).toBe(200);
   await expect.poll(async () => (await db.task.findUniqueOrThrow({ where: { id: taskId } })).scheduleVersion).toBe(1);
+  await page.goto(`/projects/${projectId}/members`);
   const member = page.locator("article").filter({ has: page.getByRole("heading", { name: memberName, exact: true }) });
-  await member.getByLabel(`本周容量 ${memberName}`, { exact: true }).fill("40"); await member.getByRole("button", { name: "保存容量", exact: true }).click();
+  await member.getByLabel(`本周容量 ${memberName}`, { exact: true }).fill("40");
+  const capacitySaved = page.waitForResponse(response => response.request().method() === "PUT" && new URL(response.url()).pathname === `/api/users/${memberId}/capacity`);
+  await member.getByRole("button", { name: "保存容量", exact: true }).click();
+  expect((await capacitySaved).status()).toBe(200);
   await expect(member.getByText(/计划工时 60 小时 · 容量 40 小时 · 超出容量/)).toBeVisible();
   await page.goto(`/projects/${projectId}/risks`); await page.getByRole("button", { name: "扫描项目风险", exact: true }).click();
   await expect(page.getByText(/跨项目计划工时 60 小时，超过已配置容量 40 小时/)).toBeVisible({ timeout: 15000 });
@@ -40,8 +45,8 @@ test("PM maintains planning/capacity, scans cross-project overload, and QA remai
   expect((await page.request.post("/api/auth/logout")).status()).toBe(200);
   expect((await page.request.post("/api/auth/login", { data: { email: qaEmail, password } })).status()).toBe(200);
   await page.goto(`/projects/${projectId}/planning`);
-  await page.getByRole("button", { name: "表格视图", exact: true }).click();
-  await expect(page.getByLabel(`预计工时 ${title}`, { exact: true })).toBeDisabled();
+  await expect(page.locator("input")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "成员周容量" })).toHaveCount(0);
   expect((await page.request.patch(`/api/tasks/${taskId}/schedule`, { data: { expectedVersion: 1, plannedStartDate: week, dueDate: due, estimateHours: 10, dependencyIds: [] } })).status()).toBe(403);
   expect((await page.request.put(`/api/users/${memberId}/capacity`, { data: { weekStart: week, hours: 100, expectedVersion: 1 } })).status()).toBe(403);
 });

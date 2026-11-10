@@ -35,6 +35,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      fast-xml-parser:
+        specifier: 5.11.2
+        version: 5.11.2
       fflate:
         specifier: 0.8.2
         version: 0.8.2

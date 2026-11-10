@@ -163,7 +163,7 @@ test("saving a test case gives feedback beside its form and keeps input on failu
 test("PDF and member selectors have visible boundaries and opening the file chooser stays on the page", async ({ page, context, baseURL }) => {
   await identity(context, baseURL!, "PM");
   await page.goto(`/projects/${projectId}/documents`);
-  const file = page.getByLabel("选择 PDF", { exact: true });
+  const file = page.getByLabel("选择文件", { exact: true });
   await expect(file).toHaveCSS("border-top-width", "1px");
   const chooser = page.waitForEvent("filechooser");
   await file.click();

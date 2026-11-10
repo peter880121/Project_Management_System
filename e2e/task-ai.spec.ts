@@ -14,8 +14,8 @@ test.beforeAll(async () => {
   await db.$transaction(async tx => {
     projectId = (await tx.project.create({ data: { name: `Synthetic task AI ${randomUUID()}`, ownerId: pm } })).id;
     await tx.projectMember.createMany({ data: ["3", "4"].map(suffix => ({ projectId, userId: `00000000-0000-4000-8000-00000000000${suffix}` })) });
-    a = (await tx.task.create({ data: { projectId, title: "蓝图方案确认 A", description: "Synthetic blueprint context" } })).id;
-    b = (await tx.task.create({ data: { projectId, title: "业务需求调研 B", description: "Synthetic research context" } })).id;
+    a = (await tx.task.create({ data: { projectId, title: "蓝图方案确认 A", description: "所属阶段：需求与蓝图\nSynthetic blueprint context" } })).id;
+    b = (await tx.task.create({ data: { projectId, title: "业务需求调研 B", description: "所属阶段：需求与蓝图\nSynthetic research context" } })).id;
     const requirement = await tx.requirement.create({ data: { projectId, title: "Synthetic release requirement", content: "Synthetic acceptance criteria", status: "APPROVED" } });
     evidence = (await tx.task.create({ data: { projectId, title: "用户验收测试 UAT", requirementId: requirement.id } })).id;
     generic = (await tx.task.create({ data: { projectId, title: "最终用户培训" } })).id;
@@ -113,6 +113,7 @@ test("task compliance checks only related evidence and PM cannot run global audi
   await identity(context, baseURL!);
   expect((await page.request.post("/api/audit/summary", { data: { projectId } })).status()).toBe(403);
   await page.goto(`/projects/${projectId}/board`);
+  await page.getByRole("button", { name: "全部展开", exact: true }).click();
   const card = page.getByRole("article").filter({ has: page.getByRole("link", { name: "用户验收测试 UAT", exact: true }) });
   await card.getByRole("button", { name: "🛡️ 检查合规证据", exact: true }).click();
   const drawer = page.getByRole("dialog", { name: "检查合规证据", exact: true });

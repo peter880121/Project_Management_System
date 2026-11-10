@@ -1,14 +1,34 @@
 import "dotenv/config";
+import { freeLocalPort } from "../tests/fixtures/free-port.mjs";
 import { randomBytes } from "node:crypto";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFileSync, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { PrismaClient } from "@prisma/client";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { once } from "node:events";
 import { createS3Fixture } from "../tests/fixtures/s3-server.mjs";
 
+// Structural rollback and project-freeze fixtures must not mutate another file's
+// evidence. Every file gets its own existing isolated-db wrapper, serially.
+if (process.argv.includes("--integration-isolated")) {
+  const files = readdirSync("tests/integration").filter(name => name.endsWith(".test.ts")).sort();
+  const results = [];
+  for (const file of files) {
+    console.log(`Isolated integration file: ${file}`);
+    const result = spawnSync(process.execPath, ["scripts/test-project-ia.mjs", "--integration-only", `--integration-file=tests/integration/${file}`], { env: process.env, stdio: "inherit", windowsHide: true });
+    results.push({ file, exitCode: result.status ?? 1 });
+  }
+  mkdirSync("test-results", { recursive: true }); writeFileSync("test-results/integration-isolated.json", JSON.stringify(results, null, 2));
+  console.log(`Isolated integration files: ${results.filter(r => r.exitCode === 0).length}/${results.length} passed`);
+  process.exit(results.some(r => r.exitCode !== 0) ? 1 : 0);
+}
+
 // Keep the active demo database and its immutable audit history out of acceptance tests.
 const source = new URL(process.env.DATABASE_URL || "");
+// Optional diagnostic replay budget; preserve the default timeout for ordinary runs.
+const timeoutArgument = process.argv.find(arg => arg.startsWith("--integration-timeout-ms="));
+const replayTimeout = timeoutArgument ? Number(timeoutArgument.split("=")[1]) : undefined;
+if (replayTimeout !== undefined && (!Number.isInteger(replayTimeout) || replayTimeout < 1000 || replayTimeout > 120000)) throw new Error("Integration replay timeout must be 1000–120000 ms");
 if (!["localhost", "127.0.0.1", "[::1]"].includes(source.hostname) || !process.env.MYSQL_ROOT_PASSWORD) throw new Error("Local MySQL administrator required");
 const name = `medpm_test_ia_${Date.now()}_${randomBytes(3).toString("hex")}`;
 const target = new URL(source); target.pathname = `/${name}`;
@@ -16,7 +36,8 @@ const adminUrl = new URL(source); adminUrl.username = "root"; adminUrl.password 
 const admin = new PrismaClient({ datasources: { db: { url: adminUrl.toString() } } });
 const username = decodeURIComponent(source.username);
 if (!/^[a-zA-Z0-9_-]+$/.test(username)) throw new Error("Unexpected database account");
-const env = { ...process.env, NODE_ENV: "development", DATABASE_URL: target.toString(), NEXT_DIST_DIR: `.next/ia-${Date.now()}`, LOCAL_DEV_SEED_PASSWORD: randomBytes(24).toString("base64url"), REGISTRATION_INVITE_CODE: randomBytes(24).toString("base64url"), E2E_BASE_URL: "http://127.0.0.1:4514" };
+const appPort = await freeLocalPort();
+const env = { ...process.env, NODE_ENV: "development", DATABASE_URL: target.toString(), NEXT_DIST_DIR: `.next/ia-${Date.now()}`, LOCAL_DEV_SEED_PASSWORD: randomBytes(24).toString("base64url"), REGISTRATION_INVITE_CODE: randomBytes(24).toString("base64url"), E2E_BASE_URL: `http://127.0.0.1:${appPort}`, E2E_APP_PORT: String(appPort) };
 let app;
 let stoppingApp = false;
 let storageFixture;
@@ -41,10 +62,10 @@ try {
   execFileSync(process.execPath, ["node_modules/prisma/build/index.js", "migrate", "deploy"], { env, stdio: "pipe", windowsHide: true });
   execFileSync(process.execPath, ["prisma/seed.mjs"], { env, stdio: "pipe", windowsHide: true });
   console.log(`Isolated acceptance database: ${name}; active .env unchanged`);
-  if (!process.argv.includes("--e2e-only") && !process.argv.includes("--stream-only") && !process.argv.includes("--schema-only")) await run(["node_modules/vitest/vitest.mjs", "run", "--config", "vitest.integration.config.ts", ...process.argv.filter(arg => arg.startsWith("--integration-file=")).map(arg => arg.slice("--integration-file=".length))]);
+  if (!process.argv.includes("--e2e-only") && !process.argv.includes("--stream-only") && !process.argv.includes("--schema-only")) await run(["node_modules/vitest/vitest.mjs", "run", "--config", "vitest.integration.config.ts", ...(replayTimeout === undefined ? [] : [`--testTimeout=${replayTimeout}`]), ...process.argv.filter(arg => arg.startsWith("--integration-file=")).map(arg => arg.slice("--integration-file=".length))]);
   if (process.argv.includes("--schema-only")) { console.log("Schema deployment and seed verified"); }
   else if (process.argv.includes("--integration-only")) { console.log("Isolated integration checks completed"); }
-  else if (process.argv.includes("--stream-only")) { await run(["scripts/test-ai-streaming-e2e.mjs"]); }
+  else if (process.argv.includes("--stream-only")) { await run(["scripts/test-ai-streaming-e2e.mjs", ...process.argv.filter(arg => arg.startsWith("e2e/"))]); }
   else {
   // Exercise the real S3 SDK with the existing deterministic protocol fixture.
   storageFixture = createS3Fixture(); storageFixture.listen(0, "127.0.0.1"); await once(storageFixture, "listening");
@@ -65,7 +86,8 @@ try {
   }
   if (!ready) throw new Error(`Acceptance server not ready: ${log}`);
   const specs = process.argv.filter(arg => arg.startsWith("e2e/"));
-  await run(["node_modules/@playwright/test/cli.js", "test", ...specs, "--output=test-results/ia-run"]);
+  const grepArgument = process.argv.find(arg => arg.startsWith("--e2e-grep="));
+  await run(["node_modules/@playwright/test/cli.js", "test", ...specs, ...(grepArgument ? ["--grep", grepArgument.slice("--e2e-grep=".length)] : []), "--output=test-results/ia-run"]);
   if (!specs.length) { await stopApp(); await run(["scripts/test-ai-streaming-e2e.mjs"]); }
   }
 } catch (error) { console.error(error.message); process.exitCode = 1; }

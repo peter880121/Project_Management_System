@@ -1,3 +1,4 @@
+import { businessToday } from "../src/modules/tasks/plan";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
@@ -36,7 +37,7 @@ test.beforeEach(async ({ page }) => {
 test("card signing rejects missing/tampered signatures, returns 401 for wrong password, then saves a single audit", async ({ page }) => {
   test.setTimeout(90000);
   const url = `/api/tasks/${taskId}`;
-  for (const data of [{ status: "DONE", actualHours: 3 }, { status: "DONE", actualHours: 3, signaturePassword: password, signatureReason: "tampered" }]) {
+  for (const data of [{ status: "DONE", completedAt: businessToday(), actualHours: 3 }, { status: "DONE", completedAt: businessToday(), actualHours: 3, signaturePassword: password, signatureReason: "tampered" }]) {
     expect((await page.request.patch(url, { data })).status()).toBe(400);
   }
   await page.goto(`/projects/${projectId}/board`);
@@ -85,9 +86,9 @@ test("card signing rejects missing/tampered signatures, returns 401 for wrong pa
   await expect(page.getByRole("status").filter({ hasText: "已签署并保存" })).toBeVisible();
   await page.screenshot({ path: `${evidence}/03-signature-success-toast.png`, fullPage: true });
   const audit = await db.auditLog.findFirstOrThrow({ where: { entityId: taskId, action: "TASK_SIGNED_AND_COMPLETED" } });
-  expect(audit.actorId).toBe(actorId); expect(audit.after).toMatchObject({ status: "DONE", signatureReason: "确认会议已完成", actualHours: "3" });
+  expect(audit.actorId).toBe(actorId); expect(audit.after).toMatchObject({ status: "DONE", signatureReason: "确认会议已完成", actualHours: 3 });
   expect(JSON.stringify(audit)).not.toContain(password);
-  expect((await page.request.patch(url, { data: { status: "DONE", actualHours: 3, signaturePassword: password, signatureReason: "确认开发完成" } })).status()).toBe(409);
+  expect((await page.request.patch(url, { data: { status: "DONE", completedAt: businessToday(), actualHours: 3, signaturePassword: password, signatureReason: "确认开发完成" } })).status()).toBe(409);
   expect(await db.auditLog.count({ where: { entityId: taskId } })).toBe(1);
 });
 
@@ -96,7 +97,6 @@ test("drawer cancellation sends no PATCH; successful signing survives failed boa
   await page.goto(`/projects/${projectId}/board`);
   await page.locator(`[data-task-card="${drawerId}"]`).getByRole("link").click();
   const drawer = page.getByRole("dialog", { name: "任务详情", exact: true });
-  await drawer.getByLabel("实际工时 合成验证任务：测试通过", { exact: true }).fill("2");
   await drawer.getByRole("button", { name: "完成", exact: true }).click();
   const modal = page.getByRole("dialog", { name: "电子签名", exact: true });
   await modal.getByLabel("签名密码", { exact: true }).fill("Synthetic-cancelled-password");
@@ -104,6 +104,7 @@ test("drawer cancellation sends no PATCH; successful signing survives failed boa
   expect((await db.task.findUniqueOrThrow({ where: { id: drawerId } })).status).toBe("IN_PROGRESS");
   await drawer.getByRole("button", { name: "完成", exact: true }).click();
   await expect(modal.getByLabel("签名密码", { exact: true })).toHaveValue("");
+  await modal.getByLabel("签名实际工时").fill("2");
   await modal.getByLabel("签名密码", { exact: true }).fill(password);
   await modal.getByLabel("签名意图", { exact: true }).selectOption("确认测试通过");
   // Inject failure only into refresh GETs; signing reaches the real API and MySQL.

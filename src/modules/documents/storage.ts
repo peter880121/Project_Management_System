@@ -1,7 +1,7 @@
 import { Client } from "minio";
 import * as http from "node:http";
 import * as https from "node:https";
-import { MAX_PDF_BYTES } from "./validation";
+import { MAX_DOCUMENT_BYTES } from "./formats";
 
 export function getObjectStorageClient(): Client {
   const endpoint = process.env.MINIO_ENDPOINT;
@@ -28,7 +28,7 @@ export function getObjectStorageClient(): Client {
 }
 
 export type DocumentStorage = {
-  put: (key: string, bytes: Buffer, sha256: string) => Promise<void>;
+  put: (key: string, bytes: Buffer, sha256: string, mediaType?: string) => Promise<void>;
   get: (key: string) => Promise<Buffer>;
   remove: (key: string) => Promise<void>;
 };
@@ -38,14 +38,14 @@ const bucket = () => {
   return value;
 };
 export const documentStorage: DocumentStorage = {
-  async put(key, bytes, sha256) { await getObjectStorageClient().putObject(bucket(), key, bytes, bytes.length, { "Content-Type": "application/pdf", "X-Amz-Meta-Sha256": sha256 }); },
+  async put(key, bytes, sha256, mediaType = "application/pdf") { await getObjectStorageClient().putObject(bucket(), key, bytes, bytes.length, { "Content-Type": mediaType, "X-Amz-Meta-Sha256": sha256 }); },
   async get(key) {
     const stream = await getObjectStorageClient().getObject(bucket(), key);
     const chunks: Buffer[] = []; let total = 0;
     try {
       for await (const part of stream) {
         const chunk = Buffer.from(part); total += chunk.length;
-        if (total > MAX_PDF_BYTES) throw new Error("Object exceeds PDF limit");
+        if (total > MAX_DOCUMENT_BYTES) throw new Error("Object exceeds document limit");
         chunks.push(chunk);
       }
       return Buffer.concat(chunks);

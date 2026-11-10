@@ -1,3 +1,4 @@
+import { FROZEN_PROJECT_STATUSES } from "@/modules/projects/freeze";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { SYSTEM_USER_ID } from "@/lib/system-user";
@@ -9,7 +10,7 @@ export async function syncAssetSourceTick(put = async (key: string, bytes: Buffe
   await getObjectStorageClient().putObject(bucket, key, bytes, bytes.length, { "Content-Type": "text/markdown", "X-Amz-Meta-Sha256": sha256 });
 }) {
   const job = await prisma.$transaction(async tx => {
-    const now = new Date(); const item = await tx.assetSourceJob.findFirst({ where: { document: { project: { status: { not: "ARCHIVED" } } }, status: { in: ["QUEUED", "RUNNING", "FAILED"] }, attempts: { lt: 5 }, nextRunAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, include: { document: true }, orderBy: { nextRunAt: "asc" } });
+    const now = new Date(); const item = await tx.assetSourceJob.findFirst({ where: { document: { project: { status: { notIn: [...FROZEN_PROJECT_STATUSES] } } }, status: { in: ["QUEUED", "RUNNING", "FAILED"] }, attempts: { lt: 5 }, nextRunAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, include: { document: true }, orderBy: { nextRunAt: "asc" } });
     if (!item) return null;
     await lockProjectForWrite(tx, item.document.projectId, true);
     const token = randomUUID();

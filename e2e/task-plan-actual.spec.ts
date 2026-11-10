@@ -1,0 +1,66 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { PrismaClient } from "@prisma/client";
+import { expect, test } from "@playwright/test";
+import { businessToday, calendarDateTime } from "../src/modules/tasks/plan";
+import { hashPassword } from "../src/modules/auth/password";
+test.use({ trace: "off", viewport: { width: 1600, height: 1100 } });
+const db = new PrismaClient(); const evidence = "test-results/plan-actual-evidence";
+let actorId: string, projectId: string, email: string, password: string;
+const dateOffset = (days: number) => { const value = calendarDateTime(businessToday()); value.setUTCDate(value.getUTCDate() + days); return value.toISOString().slice(0, 10); };
+test.beforeAll(async () => {
+  password = process.env.LOCAL_DEV_SEED_PASSWORD || ""; if (!password) throw new Error("Synthetic password required");
+  const passwordHash = await hashPassword(password); email = `plan-actual-${randomUUID()}@medpm.local`;
+  await db.$transaction(async tx => { actorId = (await tx.user.create({ data: { email, name: "合成项目经理", role: "PM", status: "ACTIVE", passwordHash } })).id; projectId = (await tx.project.create({ data: { name: "医疗交付 · 计划与实际验证（合成）", ownerId: actorId, status: "ACTIVE" } })).id; });
+  await mkdir(evidence, { recursive: true });
+});
+test.beforeEach(async ({ page }) => { expect((await page.request.post("/api/auth/login", { data: { email, password } })).status()).toBe(200); });
+test.afterAll(async () => { try { await db.$transaction(tx => tx.session.deleteMany({ where: { userId: actorId } })); } finally { await db.$disconnect(); } });
+
+test("manual planning, backdated signing, Plan vs Actual cards and Gantt use independent dates", async ({ page }) => {
+  test.setTimeout(120000); const title = "合成验收证据复核"; const due = dateOffset(5); const start = dateOffset(-3); const actual = dateOffset(-1);
+  await page.goto(`/projects/${projectId}/tasks/new`);
+  await expect(page.getByLabel("预计完成日期", { exact: true })).toHaveValue(businessToday());
+  await page.getByLabel("任务标题", { exact: true }).fill(title); await page.getByLabel("所属阶段", { exact: true }).selectOption("CUSTOM"); await page.getByLabel("自定义阶段", { exact: true }).fill("交付复盘");
+  await page.getByLabel("预计工时", { exact: true }).fill("8"); await page.getByLabel("预计开始日期", { exact: true }).fill(start); await page.getByLabel("预计完成日期", { exact: true }).fill(due);
+  await page.getByLabel("任务说明", { exact: true }).fill("仅使用合成资料，复核独立验收证据与审批记录。计划和实际分别记录。");
+  await page.screenshot({ path: `${evidence}/01-create-plan-phase.png`, fullPage: true });
+  const created = page.waitForResponse(r => r.url().endsWith(`/api/projects/${projectId}/tasks`) && r.request().method() === "POST"); await page.getByRole("button", { name: "创建任务", exact: true }).click();
+  const response = await created; expect(response.status()).toBe(201); const task = (await response.json()).data;
+  expect(task.planningStatus).toBe("SCHEDULED"); expect(task.createdAt).toBeTruthy(); expect(task.completedAt).toBeNull();
+  const card = page.locator(`[data-task-card="${task.id}"]`); await expect(card).toBeVisible(); await card.getByRole("button", { name: "开始 / 恢复", exact: true }).click();
+  await expect(card.getByRole("button", { name: "完成", exact: true })).toBeVisible(); await card.getByRole("button", { name: "完成", exact: true }).click();
+  const modal = page.getByRole("dialog", { name: "电子签名", exact: true }); await expect(modal.getByLabel("实际完成日期", { exact: true })).toHaveValue(businessToday());
+  await modal.getByLabel("实际完成日期", { exact: true }).fill(actual); await modal.getByLabel("签名实际工时", { exact: true }).fill("10.5"); await modal.getByLabel("签名意图", { exact: true }).selectOption("确认验收与移交完成");
+  await page.screenshot({ path: `${evidence}/02-sign-actual-date-hours.png` });
+  await modal.getByLabel("签名密码", { exact: true }).fill(password); await modal.getByRole("button", { name: "确认签署", exact: true }).click(); await expect(modal).toHaveCount(0);
+  await expect(card.getByLabel("计划与实际工时", { exact: true })).toContainText("预计 8 小时"); await expect(card.getByLabel("计划与实际工时", { exact: true })).toContainText("实际 10.5 小时");
+  await page.screenshot({ path: `${evidence}/03-card-plan-actual.png` });
+  await card.getByRole("link", { name: title, exact: true }).click(); const drawer = page.getByRole("dialog", { name: "任务详情", exact: true });
+  await expect(drawer.getByRole("region", { name: "计划信息", exact: true })).toContainText(due); await expect(drawer.getByRole("region", { name: "实际信息", exact: true })).toContainText(actual); await expect(drawer).toContainText("+2.5 小时"); await page.screenshot({ path: `${evidence}/03b-drawer-plan-actual.png` }); await drawer.getByRole("button", { name: "关闭任务详情", exact: true }).click();
+  const saved = await db.task.findUniqueOrThrow({ where: { id: task.id } }); expect(saved.dueDate?.toISOString()).toBe(`${due}T00:00:00.000Z`); expect(saved.completedAt?.toISOString()).toBe(`${actual}T00:00:00.000Z`);
+  const audit = await db.auditLog.findFirstOrThrow({ where: { entityId: task.id, action: "TASK_SIGNED_AND_COMPLETED" } }); expect(audit.after).toMatchObject({ actualHours: 10.5, completionRoundId: saved.completionRoundId, completedAt: saved.completedAt!.toISOString() }); expect(JSON.stringify(audit)).not.toContain(password);
+  const control = await page.request.post(`/api/projects/${projectId}/tasks`, { data: { title: "相同计划区间的对照任务", phase: "交付复盘", estimateHours: 8, plannedStartDate: start, dueDate: due } }); expect(control.status()).toBe(201); const controlId = (await control.json()).data.id;
+  await page.goto(`/projects/${projectId}/planning`); await page.getByLabel("甘特图时间粒度", { exact: true }).selectOption("Day");
+  const bar = page.locator(`.bar-wrapper[data-id="${task.id}"] .bar`); const other = page.locator(`.bar-wrapper[data-id="${controlId}"] .bar`); await expect(bar).toBeVisible(); await expect(other).toBeVisible();
+  expect(Number(await bar.getAttribute("width"))).toBeCloseTo(Number(await other.getAttribute("width")), 1);
+  await expect(page.getByLabel("甘特任务列表").getByRole("button", { name: title, exact: true })).toContainText(`${start.slice(5)} → ${due.slice(5)}`);
+  await page.screenshot({ path: `${evidence}/04-gantt-planned-end.png` });
+  await writeFile(`${evidence}/verified-dates.json`, JSON.stringify({ taskId: task.id, dueDate: saved.dueDate, completedAt: saved.completedAt, plannedBarWidth: await bar.getAttribute("width"), identicalControlBarWidth: await other.getAttribute("width"), completionRoundId: saved.completionRoundId }, null, 2));
+});
+
+test("missing dates stay in a visible scheduling pool; reopen clears actuals and changes rounds", async ({ page }) => {
+  test.setTimeout(90000); const itemId = randomUUID(); const meeting = await db.$transaction(tx => tx.meetingRecord.create({ data: { projectId, title: "合成待排期会议", content: "合成行动项", meetingDate: new Date(), createdById: actorId, requestKey: randomUUID(), actionItems: [{ id: itemId, text: "待排期会议任务", checked: false }] } }));
+  const created = await page.request.post(`/api/projects/${projectId}/tasks`, { data: { title: "待排期会议任务", phase: "项目启动", estimateHours: 4, dueDate: null, plannedStartDate: null, meetingSource: { meetingId: meeting.id, actionItemId: itemId, expectedVersion: 1, visibilityExpansionConfirmed: true } } }); expect(created.status()).toBe(201); const task = (await created.json()).data; expect(task.planningStatus).toBe("UNSCHEDULED");
+  await page.goto(`/projects/${projectId}/planning`); await expect(page.getByRole("button", { name: "待排期会议任务", exact: true })).toBeVisible(); await expect(page.locator(`.bar-wrapper[data-id="${task.id}"]`)).toHaveCount(0);
+  expect((await page.request.patch(`/api/tasks/${task.id}`, { data: { status: "IN_PROGRESS" } })).status()).toBe(200);
+  const sign = { expectedRowVersion: (await db.task.findUniqueOrThrow({ where: { id: task.id } })).rowVersion, status: "DONE", actualHours: 5, completedAt: businessToday(), signaturePassword: password, signatureReason: "确认任务已完成" };
+  expect((await page.request.patch(`/api/tasks/${task.id}`, { data: { ...sign, completedAt: "2099-12-31" } })).status()).toBe(400);
+  const signed = await page.request.patch(`/api/tasks/${task.id}`, { data: sign }); expect(signed.status()).toBe(200); const round = (await signed.json()).data.completionRoundId;
+  const reopened = await page.request.patch(`/api/tasks/${task.id}`, { data: { status: "TODO", expectedRowVersion: (await db.task.findUniqueOrThrow({ where: { id: task.id } })).rowVersion } }); expect(reopened.status()).toBe(200); const current = (await reopened.json()).data;
+  expect(current.actualHours).toBeNull(); expect(current.completedAt).toBeNull(); expect(current.completionRoundId).toBeNull();
+  expect((await page.request.patch(`/api/tasks/${task.id}`, { data: { status: "IN_PROGRESS" } })).status()).toBe(200);
+  expect((await page.request.patch(`/api/tasks/${task.id}`, { data: { ...sign, expectedCompletionRoundId: round } })).status()).toBe(409);
+  expect((await page.request.patch(`/api/tasks/${task.id}`, { data: { ...sign, expectedCompletionRoundId: current.completionRoundId, expectedRowVersion: (await db.task.findUniqueOrThrow({ where: { id: task.id } })).rowVersion } })).status()).toBe(200);
+  expect(await db.auditLog.count({ where: { entityId: task.id, action: "TASK_SIGNED_AND_COMPLETED" } })).toBe(2);
+});

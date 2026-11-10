@@ -13,7 +13,7 @@ stateDiagram-v2
     PENDING_ACCEPTANCE --> ARCHIVED: 独立 ADMIN 校验后归档
 ```
 
-历史 `ON_HOLD`、`COMPLETED` 值保留，不自动视为已归档；PM 显式启动后才进入新流程。驳回和撤回保留原验收轮次，新提交产生新轮次，旧 QA 批准不能复用。
+历史 `ON_HOLD`、`COMPLETED` 值保留，不自动视为已归档；ON_HOLD 必须填写说明后走专用恢复流程，COMPLETED 仍可显式启动。驳回和撤回保留原验收轮次，新提交产生新轮次，旧 QA 批准不能复用。
 
 `Project.rowVersion`、当前验收 ID 和请求 UUID 防止旧页面提交、跨轮次批准与重复提交。所有流转在同一 MySQL 事务内重新查询角色、项目访问权限，并锁定 Project 行。QA 不得审查本人提交的验收，最终 ADMIN 必须与提交人、QA 为不同账号。
 

@@ -1,3 +1,4 @@
+import { freeLocalPort } from "../fixtures/free-port.mjs";
 import "dotenv/config";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -25,7 +26,8 @@ databaseUrl.pathname = `/${databaseName}`;
 const admin = new PrismaClient({ datasources: { db: { url: adminUrl.toString() } } });
 const db = new PrismaClient({ datasources: { db: { url: databaseUrl.toString() } } });
 const signingSecret = "session-http-integration-signing-secret-32-bytes";
-const baseURL = "http://127.0.0.1:4419";
+const port = await freeLocalPort();
+const baseURL = `http://127.0.0.1:${port}`;
 const password = "OriginalPassword123";
 const newPassword = "UpdatedPassword456";
 let server: ChildProcess | undefined;
@@ -99,7 +101,7 @@ describe.sequential("Session APIs over HTTP with real MySQL", () => {
     await db.$transaction((tx) => tx.user.create({ data: {
       id: SYSTEM_USER_ID, email: "system@medpm.local", name: "Synthetic system", role: "MEMBER", status: "DISABLED", isSystem: true,
     } }));
-    server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "-p", "4419"], {
+    server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "-p", String(port)], {
       env: { ...process.env, NODE_ENV: "development", DATABASE_URL: databaseUrl.toString(), SESSION_SECRET: signingSecret },
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -25,9 +25,9 @@ export function useToast() {
   if (!context) throw new Error("ToastProvider is required");
   return context;
 }
-export function useDialogToasts() {
+export function useDialogToasts(active = true) {
   const { dialog } = useToast();
-  useEffect(() => { dialog(1); return () => dialog(-1); }, [dialog]);
+  useEffect(() => { if (!active) return; dialog(1); return () => dialog(-1); }, [dialog, active]);
 }
 export function ToastViewport() {
   const { toasts, dismiss } = useToast();

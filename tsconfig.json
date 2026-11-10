@@ -31,6 +31,8 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
+    ".next/demo-4000/types/**/*.ts",
+    ".next/half-year-review/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts"
   ],

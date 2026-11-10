@@ -1,0 +1,12 @@
+import { z } from "zod";
+export const RULES = ["UNCOMPLETED_TASKS", "MISSING_DELIVERABLES", "MISSING_SIGNATURES", "UNLINKED_ACTION_ITEMS", "EMPTY_PROJECT", "REQUIREMENT_GAPS"] as const;
+export type CheckRule = typeof RULES[number];
+export const ruleSchema = z.enum(RULES);
+export const ruleLabels: Record<CheckRule, string> = { UNCOMPLETED_TASKS: "未完成任务", MISSING_DELIVERABLES: "缺少已批准交付物", MISSING_SIGNATURES: "当前完成轮次缺少电子签名", UNLINKED_ACTION_ITEMS: "未转任务的会议行动项", EMPTY_PROJECT: "项目尚无任务", REQUIREMENT_GAPS: "需求基线尚未完成验证与客户确认" };
+export const countsSchema = z.object({ UNCOMPLETED_TASKS: z.number().int().nonnegative(), MISSING_DELIVERABLES: z.number().int().nonnegative(), MISSING_SIGNATURES: z.number().int().nonnegative(), UNLINKED_ACTION_ITEMS: z.number().int().nonnegative(), EMPTY_PROJECT: z.number().int().nonnegative(), REQUIREMENT_GAPS: z.number().int().nonnegative().optional() }).strict();
+export type CheckCounts = z.infer<typeof countsSchema>;
+export const gapCount = (counts: CheckCounts) => Object.values(counts).reduce((sum, count) => sum + (count ?? 0), 0);
+export const STALE_CHECK_MESSAGE = "体检结果已失效（因为数据被修改），请重新体检。";
+export const checkResultSchema = z.object({ checkId: z.uuid(), passed: z.boolean(), counts: countsSchema, totalGaps: z.number().int().nonnegative(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/), message: z.string(), report: z.string().optional(), degraded: z.boolean().optional() }).strict();
+export type CheckResult = z.infer<typeof checkResultSchema>;
+export type GapDetail = { entityId: string; label: string; ordinal?: number };

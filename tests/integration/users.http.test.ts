@@ -1,3 +1,4 @@
+import { freeLocalPort } from "../fixtures/free-port.mjs";
 import "dotenv/config";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -15,7 +16,8 @@ const adminUrl = new URL(source); adminUrl.username = "root"; adminUrl.password 
 const testUrl = new URL(source); testUrl.pathname = `/${databaseName}`;
 const admin = new PrismaClient({ datasources: { db: { url: adminUrl.toString() } } });
 const db = new PrismaClient({ datasources: { db: { url: testUrl.toString() } } });
-const baseURL = "http://127.0.0.1:4420";
+const port = await freeLocalPort();
+const baseURL = `http://127.0.0.1:${port}`;
 const password = `${randomBytes(18).toString("hex")}Aa1`;
 let passwordHash: string;
 let server: ChildProcess | undefined;
@@ -51,7 +53,7 @@ describe.sequential("User management APIs over HTTP with real MySQL", () => {
     execFileSync(process.execPath, ["node_modules/prisma/build/index.js", "migrate", "deploy"], { env: { ...process.env, DATABASE_URL: testUrl.toString() }, stdio: "pipe" });
     passwordHash = await hashPassword(password);
     await db.$transaction((tx) => tx.user.create({ data: { id: SYSTEM_USER_ID, email: "system@medpm.local", name: "Synthetic system", isSystem: true, status: "DISABLED" } }));
-    server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "-p", "4420"], {
+    server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "-p", String(port)], {
       env: { ...process.env, NODE_ENV: "development", DATABASE_URL: testUrl.toString(), SESSION_SECRET: randomBytes(32).toString("hex") }, stdio: ["ignore", "pipe", "pipe"],
     });
     // Drain output without exposing request/Prisma arguments on failure.

@@ -7,7 +7,7 @@ export class AiStreamError extends Error {
 export async function readAiResponse<T>(response: Response, signal: AbortSignal, onEvent: (event: AiStreamEvent) => void): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new AiStreamError(typeof body.error === "string" ? body.error : "AI 请求失败", [401, 403].includes(response.status) ? "UNAUTHORIZED" : "HTTP_ERROR", response.status);
+    throw new AiStreamError(typeof body.error === "string" ? body.error : "AI 请求失败", typeof body.code === "string" ? body.code : [401, 403].includes(response.status) ? "UNAUTHORIZED" : "HTTP_ERROR", response.status);
   }
   // Retain compatibility with existing JSON callers and explicit browser fixtures.
   if (response.headers.get("content-type")?.includes("application/json")) return await response.json() as T;

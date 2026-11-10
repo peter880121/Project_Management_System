@@ -4,10 +4,10 @@ import { isActiveNavigation, isProtectedPage, sidebarItems } from "./navigation"
 describe("sidebar route and role policy", () => {
   it.each(["MEMBER", "PM", "QA", "ADMIN"] as const)("keeps ordered %s navigation within its role", role => {
     const items = sidebarItems(role);
-    expect(items.map(item => item.href)).toEqual(["/", ...(["ADMIN", "PM"].includes(role) ? ["/dashboard"] : []), "/projects", ...(["ADMIN", "QA"].includes(role) ? ["/audit"] : []), ...(role === "ADMIN" ? ["/users"] : []), "/profile"]);
+    expect(items.map(item => item.href)).toEqual(["/", "/weekly-reports", ...(["ADMIN", "PM"].includes(role) ? ["/dashboard"] : []), "/projects", ...(["ADMIN", "QA"].includes(role) ? ["/audit"] : []), ...(["PM", "MEMBER"].includes(role) ? ["/audit/issues"] : []), ...(role === "ADMIN" ? ["/users"] : []), "/profile"]);
   });
   it("gives PMO dashboard and profile without administrative or project navigation", () => {
-    expect(sidebarItems("PMO").map(item => item.href)).toEqual(["/", "/dashboard", "/profile"]);
+    expect(sidebarItems("PMO").map(item => item.href)).toEqual(["/", "/weekly-reports", "/dashboard", "/profile"]);
     expect(isProtectedPage("/dashboard")).toBe(true);
   });
   it("highlights exact home and nested feature pages without prefix collisions", () => {

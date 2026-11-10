@@ -5,6 +5,7 @@ import { recordAudit, type AuditRequestMetadata } from "@/modules/audit/service"
 import { ProjectError } from "@/modules/projects/services";
 import { findRequirement, findTask, findTestCase, updateTaskRequirement, updateTestCase } from "@/modules/projects/repositories";
 import { findSummary, insertFindingReview, updateSummaryDecision, lockQaReviewer } from "./repositories";
+import { registerScanIssues, findingFingerprint } from "@/modules/audit/issue-service";
 
 const note = z.string().trim().min(1).max(2000);
 export const decisionSchema = z.object({ decision: z.enum(["ACCEPTED", "REJECTED"]), note }).strict();
@@ -35,6 +36,14 @@ export async function reviewFinding(id: string, findingKey: string, data: z.infe
     const finding = output.success ? output.data.findings.find((row) => row.findingKey === findingKey) : undefined;
     if (!finding) throw new ProjectError("本次扫描未找到该问题", 404);
     const review = await insertFindingReview(tx, { suggestionId: id, findingKey, ...data, reviewedById: actor.actorId });
+    const occurrence = await tx.auditIssueOccurrence.findUnique({ where: { summaryId_findingKey: { summaryId: id, findingKey } } });
+    if (!occurrence) await registerScanIssues(tx, summary.projectId, id, [finding], actor);
+    const issue = await tx.auditIssue.findUniqueOrThrow({ where: { projectId_fingerprint: { projectId: summary.projectId, fingerprint: findingFingerprint(finding) } } });
+    if (issue.status === "PENDING") {
+      const next = data.decision === "CONFIRMED" ? "OPEN" : "DISMISSED";
+      await tx.auditIssue.update({ where: { id: issue.id }, data: { status: next, rowVersion: { increment: 1 } } });
+      await tx.auditIssueEvent.create({ data: { issueId: issue.id, actorId: actor.actorId, action: data.decision === "CONFIRMED" ? "CONFIRM" : "DISMISS", fromStatus: "PENDING", toStatus: next, note: data.note, evidence: { reviewId: review.id, summaryId: id } } });
+    }
     await recordAudit(tx, { ...actor, projectId: summary.projectId, action: "COMPLIANCE_FINDING_REVIEWED", entityType: "ComplianceFindingReview", entityId: review.id, after: { suggestionId: id, findingKey, ...data, evidence: finding } });
     return review;
   });

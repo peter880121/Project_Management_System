@@ -1,5 +1,6 @@
-import AuditLogViewer from "./viewer";
+import { PageBackLink } from "@/components/page-back-link";
 import Link from "next/link";
+import AuditLogViewer from "./viewer";
 import { getCurrentUser } from "@/modules/auth/session";
 import { requireRole } from "@/modules/auth/rbac";
 import { prisma } from "@/lib/prisma";
@@ -15,8 +16,9 @@ export default async function AuditPage() {
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-6 py-12">
       <PageBreadcrumbs pathname="/audit" items={[{ label: "审计" }]} />
-      <Link className="text-sm font-medium text-teal-700 hover:underline" href="/">返回工作台</Link>
+      <PageBackLink href="/">返回工作台</PageBackLink>
       <h1 className="mt-5 text-3xl font-semibold tracking-tight">审计日志与合规审查</h1>
+      <nav className="mt-5 flex gap-4 text-sm"><span className="rounded-full bg-teal-50 px-4 py-2 text-teal-900">操作记录与合规检查</span><Link className="rounded-full border px-4 py-2 text-teal-800" href="/audit/issues">整改跟踪 →</Link></nav>
       <p className="mt-2 max-w-3xl text-slate-600">
         仅 ADMIN 和 QA 可以查询。日志采用追加写入；按项目、操作人、操作类型和时间范围筛选。
       </p>

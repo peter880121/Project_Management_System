@@ -1,3 +1,4 @@
+import { taskCancelSchema, assertTaskWritable, assertTaskVersion } from "@/modules/tasks/lifecycle";
 import { businessErrorResponse } from "@/modules/audit/errors";
 import { projectScoped } from "@/modules/auth/project-scope-http";
 import { NextResponse } from "next/server";
@@ -8,17 +9,21 @@ import { requireRole } from "@/modules/auth/rbac";
 import { assignTask, changeTaskStatus } from "@/modules/audit/service";
 import { getAuditRequestMetadata } from "@/modules/audit/request-metadata";
 
-import { signatureSchema } from "@/modules/tasks/signature";
+import { taskCompletionSchema } from "@/modules/tasks/signature";
+import { taskDetailsSchema } from "@/modules/tasks/details-schema";
+import { updateTaskDetails } from "@/modules/tasks/details";
 import { lockAssetActor } from "@/modules/assets/services";
 import { recordAudit } from "@/modules/audit/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const updateTaskSchema = z.union([
-  z.object({ requiresDeliverable: z.boolean(), expectedUpdatedAt: z.iso.datetime() }).strict(),
-  z.object({ status: z.enum(["TODO", "IN_PROGRESS", "BLOCKED"]) }).strict(),
-  z.object({ status: z.literal("DONE"), actualHours: z.number().positive().max(10_000), ...signatureSchema.shape }).strict(),
-  z.object({ assigneeId: z.uuid().nullable() }).strict(),
+  taskDetailsSchema,
+  taskCancelSchema,
+  z.object({ requiresDeliverable: z.boolean(), expectedUpdatedAt: z.iso.datetime(), expectedRowVersion: z.number().int().positive().optional() }).strict(),
+  z.object({ status: z.enum(["TODO", "IN_PROGRESS", "BLOCKED"]), expectedRowVersion: z.number().int().positive().optional() }).strict(),
+  taskCompletionSchema,
+  z.object({ assigneeId: z.uuid().nullable(), expectedRowVersion: z.number().int().positive().optional() }).strict(),
 ]);
 
 async function GETHandler(_request: Request, context: { params: Promise<{ taskId: string }> }) {
@@ -58,12 +63,17 @@ async function PATCHHandler(request: Request, context: { params: Promise<{ taskI
   if (!parsed.success) return NextResponse.json({ error: "Invalid task update", issues: parsed.error.issues }, { status: 400 });
   const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, projectId: true, status: true, assigneeId: true } });
   if (!task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  if ("operation" in parsed.data) {
+    try { return NextResponse.json({ data: await updateTaskDetails(taskId, parsed.data, { actorId: user!.id, ...getAuditRequestMetadata(request) }) }); }
+    catch (error) { return businessErrorResponse(error); }
+  }
   if ("requiresDeliverable" in parsed.data) {
     const setting = parsed.data;
     try {
       const data = await prisma.$transaction(async tx => {
         await lockAssetActor(tx, task.projectId, { actorId: user!.id }, ["PM", "ADMIN"]);
         const old = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
+        assertTaskWritable(old); assertTaskVersion(old, setting.expectedRowVersion);
         if (old.status === "DONE" || old.updatedAt.toISOString() !== setting.expectedUpdatedAt) throw new Error("ASSET_TASK_CONFLICT");
         const changed = await tx.task.update({ where: { id: taskId }, data: { requiresDeliverable: setting.requiresDeliverable } });
         await recordAudit(tx, { actorId: user!.id, projectId: task.projectId, action: "TASK_DELIVERABLE_REQUIREMENT_CHANGED", entityType: "Task", entityId: taskId, before: { requiresDeliverable: old.requiresDeliverable }, after: { requiresDeliverable: changed.requiresDeliverable }, ...getAuditRequestMetadata(request) });
@@ -79,7 +89,7 @@ async function PATCHHandler(request: Request, context: { params: Promise<{ taskI
       if (!assignee) return NextResponse.json({ error: "Assignee not found" }, { status: 404 });
     }
     try {
-      const data = await assignTask({ taskId, assigneeId: parsed.data.assigneeId, actorId: user!.id, ...getAuditRequestMetadata(request) });
+      const data = await assignTask({ taskId, assigneeId: parsed.data.assigneeId, expectedRowVersion: parsed.data.expectedRowVersion, actorId: user!.id, ...getAuditRequestMetadata(request) });
       return NextResponse.json({ data });
     } catch (error) { return businessErrorResponse(error); }
   }
@@ -91,7 +101,7 @@ async function PATCHHandler(request: Request, context: { params: Promise<{ taskI
     return NextResponse.json({ error: "Only PM or ADMIN can reopen a completed task" }, { status: 403 });
   }
   try {
-    const data = await changeTaskStatus({ taskId, status: targetStatus, ...("actualHours" in parsed.data ? { actualHours: parsed.data.actualHours, signaturePassword: parsed.data.signaturePassword, signatureReason: parsed.data.signatureReason } : {}), actorId: user!.id, ...getAuditRequestMetadata(request) });
+    const data = await changeTaskStatus({ taskId, status: targetStatus, expectedRowVersion: parsed.data.expectedRowVersion, ...("cancelReason" in parsed.data ? { cancelReason: parsed.data.cancelReason } : {}), ...("actualHours" in parsed.data ? { actualHours: parsed.data.actualHours, completedAt: parsed.data.completedAt, expectedCompletionRoundId: parsed.data.expectedCompletionRoundId, signaturePassword: parsed.data.signaturePassword, signatureReason: parsed.data.signatureReason } : {}), actorId: user!.id, ...getAuditRequestMetadata(request) });
     return NextResponse.json({ data });
   } catch (error) { return businessErrorResponse(error); }
 }

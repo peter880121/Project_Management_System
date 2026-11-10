@@ -17,11 +17,11 @@ describe("document parse API permissions", () => {
     for (const action of [POST, retry]) expect((await action(request({}), context)).status).toBe(role ? 403 : 401);
     expect(mocks.queue).not.toHaveBeenCalled();
   });
-  it.each(["PM", "ADMIN"])("allows %s asynchronous submission with explicit cloud consent", async (role) => {
+  it.each(["PM", "ADMIN"])("allows %s submission and delegates format-specific consent to the transaction", async (role) => {
     mocks.actor.mockResolvedValue({ id, role });
     const input = { requestKey: randomUUID(), expectedVersion: 0, cloudProcessingConfirmed: true };
     expect((await POST(request(input), context)).status).toBe(202);
-    expect((await POST(request({ ...input, cloudProcessingConfirmed: false }), context)).status).toBe(400);
+    expect((await POST(request({ ...input, cloudProcessingConfirmed: false }), context)).status).toBe(202);
   });
   it.each(["ADMIN", "PM", "MEMBER", "QA"])("allows %s to read history/preview", async (role) => {
     mocks.actor.mockResolvedValue({ id, role });

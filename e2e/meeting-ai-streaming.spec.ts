@@ -43,22 +43,24 @@ test("real SSE, fuzzy member match, atomic task conversion and global board/Gant
   const panel = await generate(page); const preview = panel.getByLabel("AI 摘要预览", { exact: true });
   await expect(preview.getByText(/会议确认了接口联调/)).toBeVisible({ timeout: 20000 }); await expect(panel.getByRole("button", { name: "停止生成" })).toBeVisible();
   const before = await preview.locator("p").last().textContent(); await expect.poll(() => preview.locator("p").last().textContent()).not.toBe(before);
-  await panel.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${evidence}/01-streaming-typewriter.png`, fullPage: true });
+  await panel.scrollIntoViewIfNeeded(); if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/01-streaming-typewriter.png`, fullPage: true });
   const card = panel.getByRole("article", { name: "行动项：完成接口联调计划", exact: true }); await expect(card).toBeVisible({ timeout: 45000 });
   const pending = await db.aiSuggestion.findFirstOrThrow({ where: { projectId, type: "MEETING_SUMMARY", input: { path: "$.meetingId", equals: meetingId } } }); expect(pending.status).toBe("PENDING");
   expect(await db.task.count({ where: { projectId } })).toBe(0);
-  await card.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${evidence}/02-action-item-cards.png`, fullPage: true });
+  await card.scrollIntoViewIfNeeded(); if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/02-action-item-cards.png`, fullPage: true });
   await card.getByRole("button", { name: "转为任务", exact: true }).click(); const dialog = page.getByRole("dialog", { name: "行动项转为任务", exact: true });
   await expect(dialog.getByLabel("搜索负责人", { exact: true })).toHaveValue("张"); await expect(dialog.getByLabel("负责人", { exact: true }).getByRole("option")).toHaveCount(2);
   await expect(dialog.getByLabel("负责人", { exact: true }).getByRole("option", { name: "张明 · 接口工程师" })).toHaveCount(1);
   await dialog.getByLabel("负责人", { exact: true }).selectOption(zhangId);
-  await page.screenshot({ path: `${evidence}/03-fuzzy-assignee-dialog.png`, fullPage: false });
+  await dialog.getByLabel("预计工时", { exact: true }).fill("4");
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/03-fuzzy-assignee-dialog.png`, fullPage: false });
   await dialog.getByRole("checkbox").check();
   const boardRefresh = board.waitForResponse(res => res.url().endsWith(`/api/projects/${projectId}/tasks`) && res.status() === 200);
   const planningRefresh = gantt.waitForResponse(res => res.url().includes(`/api/projects/${projectId}/planning?`) && res.status() === 200);
-  await dialog.getByRole("button", { name: "确认创建任务", exact: true }).click(); await Promise.all([boardRefresh, planningRefresh]);
-  await expect(page.getByRole("status").filter({ hasText: "行动项已转为任务" })).toBeVisible(); await expect(card.getByRole("link", { name: /已转任务/ })).toBeVisible();
-  await page.screenshot({ path: `${evidence}/04-converted-task-toast.png`, fullPage: true });
+  const created = page.waitForResponse(res => res.request().method() === "POST" && new URL(res.url()).pathname === `/api/projects/${projectId}/tasks`);
+  await dialog.getByRole("button", { name: "确认创建任务", exact: true }).click(); expect((await created).status()).toBe(201);
+  await expect(page.getByRole("status").filter({ hasText: "行动项已转为任务" })).toBeVisible(); await expect(card.getByRole("link", { name: /已转任务/ })).toBeVisible(); await expect(page.getByRole("region", { name: "AI 会议提炼", exact: true })).toHaveCount(1); await expect(dialog).toHaveCount(0); await Promise.all([boardRefresh, planningRefresh]);
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/04-converted-task-toast.png`, fullPage: true });
   const task = await db.task.findFirstOrThrow({ where: { projectId, title: "完成接口联调计划" } }); expect(task.assigneeId).toBe(zhangId);
   const meeting = await db.meetingRecord.findUniqueOrThrow({ where: { id: meetingId } }); expect(JSON.stringify(meeting.actionItems)).toContain(task.id);
   await page.getByRole("link", { name: "去看看任务" }).click(); await expect(page.getByRole("dialog", { name: "任务详情", exact: true })).toBeVisible();
@@ -84,12 +86,12 @@ test("overlong input is blocked before the provider and cancellation stops the p
 test("correction progress is visible and cancellation during retry leaves no partial suggestion", async ({ page }) => {
   test.setTimeout(90000); await control("retry-hold-1"); const panel = await generate(page);
   await expect(panel.getByText("输出格式校验未通过，正在自动修正...", { exact: true })).toBeVisible({ timeout: 45000 });
-  await page.screenshot({ path: `${evidence}/05-retry-progress.png`, fullPage: true }); await panel.getByRole("button", { name: "停止生成" }).click();
+  if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/05-retry-progress.png`, fullPage: true }); await panel.getByRole("button", { name: "停止生成" }).click();
   expect(await db.aiSuggestion.count({ where: { projectId, input: { path: "$.meetingId", equals: meetingId } } })).toBe(0);
 });
 test("permission revoked during streaming emits a toast and cannot save", async ({ page }) => {
   test.setTimeout(90000); await control("hold"); const panel = await generate(page); await expect(panel.getByText(/会议确认了接口联调/)).toBeVisible();
   await db.$transaction(tx => tx.user.update({ where: { id: actorId }, data: { role: "MEMBER" } })); await control("release");
-  await expect(page.getByRole("alert").filter({ hasText: /权限或会话已变化|权限已变更/ }).first()).toBeVisible({ timeout: 45000 }); await page.screenshot({ path: `${evidence}/06-permission-revoked-toast.png`, fullPage: true });
+  await expect(page.getByRole("alert").filter({ hasText: /权限或会话已变化|权限已变更/ }).first()).toBeVisible({ timeout: 45000 }); if (process.env.E2E_CAPTURE_EVIDENCE === "1") await page.screenshot({ path: `${evidence}/06-permission-revoked-toast.png`, fullPage: true });
   expect(await db.aiSuggestion.count({ where: { projectId, input: { path: "$.meetingId", equals: meetingId } } })).toBe(0);
 });
